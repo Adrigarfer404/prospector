@@ -40,7 +40,8 @@ const EMPTY_FORM: FormState = {
   smtpPort: "587",
   smtpUser: "",
   smtpPass: "",
-  smtpSecure: true,
+  // 587 negocia el TLS (STARTTLS): el SSL implícito sólo es para 465.
+  smtpSecure: false,
   linkedinUrl: "",
   dailyLimit: "50",
   isDefault: true,
@@ -222,17 +223,31 @@ export default function SettingsPage() {
               type="email"
             />
           </Field>
-          <Field label="Servidor SMTP" hint="Por ejemplo smtp.gmail.com o smtp.ionos.com.">
+          <Field
+            label="Servidor SMTP"
+            hint="Host del servidor de salida. Ej.: smtp.dondominio.com, smtp.ionos.com, smtp.gmail.com."
+          >
             <Input
               value={form.smtpHost}
               onChange={(value) => update({ smtpHost: value })}
               placeholder="smtp.tuempresa.com"
             />
           </Field>
-          <Field label="Puerto">
+          <Field
+            label="Puerto"
+            hint="587 = STARTTLS (recomendado) · 465 = SSL directo · 25 sin cifrar"
+          >
             <Input
               value={form.smtpPort}
-              onChange={(value) => update({ smtpPort: value })}
+              onChange={(value) => {
+                // El SSL implícito sólo tiene sentido en el 465. En el 587 el
+                // TLS se negocia al vuelo: marcarlo rompe la conexión.
+                const port = Number(value);
+                update({
+                  smtpPort: value,
+                  smtpSecure: port === 465,
+                });
+              }}
               type="number"
               min={1}
               max={65535}
@@ -275,7 +290,7 @@ export default function SettingsPage() {
           <Checkbox
             checked={form.smtpSecure}
             onChange={(checked) => update({ smtpSecure: checked })}
-            label="Conexión segura (TLS/SSL)"
+            label="SSL directo (sólo puerto 465)"
           />
           <Checkbox
             checked={form.isDefault}

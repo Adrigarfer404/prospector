@@ -82,7 +82,7 @@ export async function POST(request: Request) {
         smtpPort: data.smtpPort ?? null,
         smtpUser: data.smtpUser ?? null,
         smtpPass: data.smtpPass ?? null,
-        smtpSecure: data.smtpSecure ?? true,
+        smtpSecure: data.smtpSecure ?? (data.smtpPort ?? 587) === 465,
         linkedinUrl: data.linkedinUrl ?? null,
         dailyLimit: data.dailyLimit ?? 50,
         isDefault: data.isDefault ?? false,

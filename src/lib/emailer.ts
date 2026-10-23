@@ -25,7 +25,10 @@ export type SendResult = {
 const transporterCache = new Map<string, Transporter>();
 
 function keyOf(cfg: SmtpConfig) {
-  return `${cfg.host}:${cfg.port}:${cfg.user ?? ""}`;
+  // El modo de cifrado también entra en la clave: si el usuario prueba con
+  // STARTTLS y luego guarda con SSL directo, no debe reutilizarse el
+  // trasportador antiguo.
+  return `${cfg.host}:${cfg.port}:${cfg.user ?? ""}:${cfg.secure ?? cfg.port === 465 ? "ssl" : "starttls"}`;
 }
 
 export function getTransporter(cfg: SmtpConfig): Transporter {
