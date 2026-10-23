@@ -35,6 +35,7 @@ local.
 ## Arranque rápido
 
 ```bash
+git clone git@github.com:Adrigarfer404/prospector.git
 cd prospector
 npm install
 
@@ -51,6 +52,12 @@ npm run dev
 ```
 
 Abre <http://localhost:3000/finder>.
+
+> La base `prisma/dev.db` no está en el repo (es un artefacto local con los
+> prospectos que has encontrado): se recrea con `npm run setup`. Para usar la
+> búsqueda web hace falta la sesión de MiniMax del sistema
+> (`~/.minimax/config.yaml` + `local-runtime.auth.json`); sin ella el Finder
+> cae a OpenStreetMap/BORME y avisa por los warnings.
 
 > El seed tarda entre 2 y 6 minutos por consulta: hace búsquedas web reales y
 > verifica emails por SMTP. Para probar rápido sin red:
