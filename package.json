@@ -1,0 +1,50 @@
+{
+  "name": "prospector",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "seed": "tsx scripts/seed.ts",
+    "seed:fast": "tsx scripts/seed.ts --skip-discovery",
+    "test:finder": "tsx scripts/test-finder.ts",
+    "test:providers": "tsx scripts/test-providers.ts",
+    "test:messages": "tsx scripts/test-messages.ts",
+    "test:crawl": "tsx scripts/test-crawl.ts",
+    "test:e2e": "tsx scripts/test-e2e.ts",
+    "cleanup": "tsx scripts/cleanup-leads.ts",
+    "setup": "prisma db push && tsx scripts/seed.ts",
+    "test:sources": "tsx scripts/test-sources.ts",
+    "test:resolve": "tsx scripts/test-resolve.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3",
+    "cheerio": "^1.2.0",
+    "iconv-lite": "^0.7.3",
+    "next": "15.5.28",
+    "nodemailer": "^10.2.1",
+    "prisma": "^6.19.3",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/nodemailer": "^8.0.2",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.28",
+    "tailwindcss": "^4",
+    "tsx": "^4.23.15",
+    "typescript": "^5"
+  },
+  "description": "Prospector: motor local de prospección y outreach para vender AgendaOS (clone funcional de Enginy)"
+}

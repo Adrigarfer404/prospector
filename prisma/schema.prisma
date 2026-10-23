@@ -1,0 +1,327 @@
+// Datasource: SQLite local-first (zero setup). El schema usa String en lugar de
+// enums/Json porque Prisma no los soporta en SQLite; los unions tipados viven en
+// src/lib/types.ts y el JSON se serializa como texto.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String   @default("Mi workspace")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  playbook   Playbook?
+  identities Identity[]
+  lists      List[]
+  leads      Lead[]
+  companies  Company[]
+  campaigns  Campaign[]
+  inbox      Conversation[]
+  activities Activity[]
+  blocklist  BlocklistEntry[]
+  savedViews SavedView[]
+  jobs       Job[]
+}
+
+model Company {
+  id          String  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name          String
+  domain        String?
+  website       String?
+  industry      String?
+  description   String?
+  size          String?
+  employees     Int?
+  foundingYear  Int?
+  headquarters  String?
+  city          String?
+  region        String?
+  country       String  @default("ES")
+  phoneNumber   String?
+  linkedinUrl   String?
+  logoUrl       String?
+  source        String  @default("manual")
+  sourceRef     String?
+  tags          String  @default("[]") // JSON string[]
+  enrichment    String  @default("{}") // JSON object
+  score         Int     @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  leads Lead[]
+
+  @@unique([workspaceId, domain, name])
+  @@index([workspaceId])
+}
+
+model Lead {
+  id          String  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  companyId   String?
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  firstName    String?
+  lastName     String?
+  fullName     String?
+  jobTitle     String?
+  department   String?
+  seniority    String?
+  email        String?
+  phoneNumber  String?
+  linkedinUrl  String?
+  website      String?
+  city         String?
+  region       String?
+  country      String  @default("ES")
+  source       String  @default("manual")
+  sourceRef    String?
+  status       String  @default("new") // new|researched|contacted|replied|qualified|unsubscribed|bounced|do_not_contact
+  score        Int     @default(0)
+  scoreReason  String?
+  /** Perfil comercial calculado: autonomo|negocio_sin_crm|con_crm|cadena|plataforma|desconocido */
+  profile      String  @default("desconocido")
+  fitNotes     String?
+  enrichment   String  @default("{}") // JSON object
+  aiSummary    String?
+  notes        String?
+  lastContactedAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  emails       LeadEmail[]
+  listItems    ListItem[]
+  recipients   CampaignRecipient[]
+  conversations Conversation[]
+
+  @@index([workspaceId, status])
+  @@index([workspaceId, email])
+  @@index([companyId])
+}
+
+model LeadEmail {
+  id         String   @id @default(cuid())
+  leadId     String
+  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  email      String
+  source     String   @default("pattern") // pattern|crawl|hunter|manual|import
+  status     String   @default("unverified") // verified|unverified|invalid|catch_all|risky
+  confidence Int      @default(0)
+  verifiedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@unique([leadId, email])
+  @@index([email])
+}
+
+model List {
+  id          String  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  icp         String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items ListItem[]
+
+  @@index([workspaceId])
+}
+
+model ListItem {
+  id        String   @id @default(cuid())
+  listId    String
+  list      List     @relation(fields: [listId], references: [id], onDelete: Cascade)
+  leadId    String
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  status    String   @default("new")
+  score     Int      @default(0)
+  addedAt   DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([listId, leadId])
+  @@index([listId])
+}
+
+model Campaign {
+  id          String  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  status      String  @default("draft") // draft|active|paused|completed
+  channel     String  @default("email") // email|linkedin|mixed
+  objective   String?
+  dailyLimit  Int     @default(50)
+  autoSend    Boolean @default(false)
+  aiPersonalize Boolean @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  steps      CampaignStep[]
+  recipients CampaignRecipient[]
+
+  @@index([workspaceId, status])
+}
+
+model CampaignStep {
+  id         String  @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  order      Int
+  type       String  // email|linkedin_connect|linkedin_message|linkedin_like|call|wait|condition
+  name       String?
+  delayDays  Int     @default(0)
+  delayHours Int     @default(0)
+  subject    String?
+  body       String?
+  aiEnabled  Boolean @default(false)
+  stopOnReply Boolean @default(true)
+  settings   String  @default("{}") // JSON object
+  createdAt  DateTime @default(now())
+
+  @@index([campaignId, order])
+}
+
+model CampaignRecipient {
+  id          String   @id @default(cuid())
+  campaignId  String
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  status      String   @default("pending") // pending|sending|sent|replied|failed|booked|skipped
+  currentStep Int      @default(0)
+  sentCount   Int      @default(0)
+  lastSentAt  DateTime?
+  repliedAt   DateTime?
+  error       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([campaignId, leadId])
+  @@index([campaignId, status])
+}
+
+model Conversation {
+  id          String  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  leadId      String?
+  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  channel     String  @default("email") // email|linkedin|call|note
+  direction   String  @default("inbound") // inbound|outbound
+  subject     String?
+  body        String
+  status      String  @default("open") // open|replied|closed|booked
+  read        Boolean @default(false)
+  sentiment   String?
+  aiSummary   String?
+  externalId  String?
+  sentAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, status])
+  @@index([leadId])
+}
+
+model Identity {
+  id          String  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  email       String
+  smtpHost    String?
+  smtpPort    Int?
+  smtpUser    String?
+  smtpPass    String?
+  smtpSecure  Boolean @default(true)
+  linkedinUrl String?
+  dailyLimit  Int     @default(50)
+  isDefault   Boolean @default(false)
+  channels    String  @default("[\"email\"]") // JSON string[]
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId])
+}
+
+model Playbook {
+  id            String  @id @default(cuid())
+  workspaceId   String  @unique
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  ourCompany    String  @default("AgendaOS")
+  ourOffer      String?
+  ourValue      String?
+  icpSummary    String?
+  icpCriteria   String  @default("[]") // JSON array of {field, op, value}
+  disqualified  String  @default("[]") // JSON array
+  proofPoints   String  @default("[]") // JSON array
+  tone          String  @default("profesional y cercano")
+  language      String  @default("es")
+  cta           String?
+  signature     String?
+  updatedAt     DateTime @updatedAt
+}
+
+model Activity {
+  id          String  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type        String
+  subject     String?
+  payload     String  @default("{}") // JSON object
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, createdAt])
+}
+
+model BlocklistEntry {
+  id          String  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type        String // email|domain|phone|linkedin|name
+  value       String
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  @@unique([workspaceId, type, value])
+}
+
+model SavedView {
+  id          String  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  entity      String
+  name        String
+  filters     String  @default("{}") // JSON object
+  createdAt   DateTime @default(now())
+
+  @@unique([workspaceId, entity, name])
+}
+
+model Job {
+  id          String  @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  type        String
+  status      String  @default("queued") // queued|running|done|error
+  progress    Int     @default(0)
+  total       Int     @default(0)
+  message     String?
+  result      String  @default("{}") // JSON object
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId, status])
+}
