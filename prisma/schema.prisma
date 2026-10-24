@@ -28,6 +28,26 @@ model Workspace {
   blocklist  BlocklistEntry[]
   savedViews SavedView[]
   jobs       Job[]
+  aiSetting  AiSetting?
+}
+
+/// Configuración del modelo de lenguaje: proveedor, modelo y credenciales.
+/// Permite cambiar de MiniMax a Claude, OpenRouter o cualquier API
+/// compatible con OpenAI sin tocar el código.
+model AiSetting {
+  id          String   @id @default(cuid())
+  workspaceId String   @unique
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  provider          String  @default("minimax")   // minimax|anthropic|openrouter|openai
+  model             String  @default("MiniMax-M3")
+  webSearchModel    String  @default("MiniMax-M3.1-Flash")
+  webSearchProvider String  @default("auto")     // auto|minimax|anthropic|openrouter|none
+  apiKey            String?
+  baseUrl           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Company {

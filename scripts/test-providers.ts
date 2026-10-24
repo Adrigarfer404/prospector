@@ -15,7 +15,7 @@ import {
   verifyEmails,
 } from "../src/lib/providers/enrichment";
 import type { DiscoveredBusiness } from "../src/lib/providers/contract";
-import { llmClient } from "../src/lib/providers/llm";
+import { completeText } from "../src/lib/ai";
 
 type Block = {
   name: string;
@@ -179,7 +179,7 @@ async function main(): Promise<void> {
   let llmMessage = "";
   let llmError: string | null = null;
   try {
-    llmMessage = await llmClient.complete(
+    llmMessage = await completeText(
       [
         {
           role: "system",

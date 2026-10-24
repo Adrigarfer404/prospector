@@ -1,4 +1,4 @@
-import { MODEL_FAST, MODEL_STRUCTURED, completeJson, webSearch, type WebSearchHit } from "./minimax";
+import { completeJson, webSearch, type WebSearchHit } from "../ai";
 import type { DiscoveredBusiness } from "./contract";
 import { SERVICE_STOPWORDS } from "./enrichment/website";
 
@@ -213,7 +213,7 @@ export async function findProspectsViaWeb(opts: FinderOptions): Promise<FinderRe
   for (const prompt of prompts) {
     try {
       const search = await webSearch(prompt, {
-        model: opts.model ?? MODEL_FAST,
+        model: opts.model,
         timeoutMs: opts.timeoutMs ?? 180_000,
         maxRounds: 2,
       });
@@ -260,7 +260,7 @@ ${context}
 
 Responde con este JSON exacto:
 {"prospects":[{"name":"","website":null,"email":null,"phone":null,"address":null,"city":null,"region":null,"contactName":null,"jobTitle":null,"linkedinUrl":null,"usesExternalBooking":false,"signals":[],"notes":null}]}`,
-    { system: EXTRACTION_SYSTEM, model: MODEL_STRUCTURED, maxTokens: 8000, temperature: 0.1 },
+    { system: EXTRACTION_SYSTEM, maxTokens: 8000, temperature: 0.1 },
   );
 
   const prospects = extraction?.prospects ?? [];
@@ -394,7 +394,7 @@ export async function resolveBusinessContact(input: {
 
   try {
     const search = await webSearch(prompt, {
-      model: input.model ?? MODEL_FAST,
+      model: input.model,
       timeoutMs: input.timeoutMs ?? 180_000,
       maxRounds: 1,
       maxTokens: 1500,
@@ -433,7 +433,7 @@ export async function resolveBusinessContact(input: {
       signals?: string[];
     }>(
       `Estos son los resultados de buscar "${input.name}" en ${where}:\n\n${context}\n\nExtrae los datos de contacto reales de ESTE negocio (no de otros que aparezcan en los resultados). Si no hay web, deja website a null. Responde con JSON: {"website":null,"email":null,"phone":null,"contactName":null,"jobTitle":null,"address":null,"city":null,"signals":[]}`,
-      { system: EXTRACTION_SYSTEM, model: MODEL_STRUCTURED, maxTokens: 1200, temperature: 0.1 },
+      { system: EXTRACTION_SYSTEM, maxTokens: 1200, temperature: 0.1 },
     );
 
     const website = extracted?.website ? normalizeUrl(extracted.website) : null;
@@ -448,7 +448,7 @@ export async function resolveBusinessContact(input: {
       try {
         const mailSearch = await webSearch(
           `Busca el email de contacto y el teléfono de ${domain} (sitio web oficial). Necesito la dirección de email exacta y el teléfono. Cita las URLs donde aparecen.`,
-          { model: input.model ?? MODEL_FAST, timeoutMs: input.timeoutMs ?? 120_000, maxRounds: 1, maxTokens: 1024 },
+          { model: input.model, timeoutMs: input.timeoutMs ?? 120_000, maxRounds: 1, maxTokens: 1024 },
         );
         const mailContext = mailSearch.hits
           .slice(0, 10)
@@ -456,7 +456,7 @@ export async function resolveBusinessContact(input: {
           .join("\n---\n");
         const mail = await completeJson<{ email?: string | null; phone?: string | null }>(
           `Busca el email y teléfono de contacto del sitio ${domain}.\n\n${mailContext}\n\nResponde con JSON: {"email":null,"phone":null}. Usa sólo emails que aparezcan explícitamente en los resultados.`,
-          { model: MODEL_STRUCTURED, maxTokens: 600, temperature: 0.1 },
+          { maxTokens: 600, temperature: 0.1 },
         );
         if (mail?.email && /@/.test(mail.email) && !/@(example|sentry|wixpress)/i.test(mail.email)) {
           email = mail.email.trim().toLowerCase();

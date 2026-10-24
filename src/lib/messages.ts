@@ -1,31 +1,25 @@
-import {
-  MODEL_STRUCTURED,
-  callMiniMax,
-  completeJson as minimaxCompleteJson,
-  extractText,
-} from "./providers/minimax";
+import { completeText, completeJson as aiCompleteJson } from "./ai";
 import { parseJson, type IcpCriterion } from "./types";
 
 /**
- * Capa de generación de mensajes. Usa el LLM configurado en el sistema
- * (minimax/MiniMax-M3) a través del bridge de src/lib/providers/llm.ts, con
- * fallback determinista por plantilla para que la app nunca se quede sin
- * salida aunque el LLM falle.
+ * Capa de generación de mensajes. Usa el proveedor de IA que esté
+ * configurado en Ajustes (por defecto MiniMax, con la sesión del runtime
+ * local), con fallback determinista por plantilla para que la app nunca se
+ * quede sin salida aunque el modelo falle.
  */
 
 /**
- * Envoltura fina sobre el cliente MiniMax. Se usa el cliente autenticado
- * propio (src/lib/providers/minimax.ts) porque el script del sistema no
- * envía token y devuelve 401.
+ * Envoltura fina sobre el cliente de IA. Devuelve null si el modelo falla:
+ * quien llama tiene siempre un plan B (plantilla fija).
  */
 export async function llmCompleteJson<T>(
   messages: { role: "system" | "user"; content: string }[],
   hint?: string,
 ): Promise<T | null> {
   try {
-    return await minimaxCompleteJson<T>(
+    return await aiCompleteJson<T>(
       messages.map((m) => `${m.role === "system" ? m.content + "\n\n" : ""}${m.content}`).join("\n"),
-      { model: MODEL_STRUCTURED, maxTokens: 4000, temperature: 0.3 },
+      { maxTokens: 4000, temperature: 0.3 },
     );
   } catch (err) {
     console.error("[llm] completeJson falló", err);
@@ -38,20 +32,12 @@ export async function llmComplete(
   opts?: { maxTokens?: number; temperature?: number },
 ): Promise<string | null> {
   try {
-    const response = await callMiniMax({
-      model: MODEL_STRUCTURED,
-      messages: messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
-      maxTokens: opts?.maxTokens ?? 2000,
-      temperature: opts?.temperature ?? 0.5,
-      timeoutMs: 180_000,
-    });
-    const text = extractText(response);
-    return text || null;
+    return await completeText(
+      messages.map((m) => ({ role: m.role, content: m.content })),
+      { maxTokens: opts?.maxTokens ?? 1200, temperature: opts?.temperature ?? 0.5 },
+    );
   } catch (err) {
-    console.error("[llm] fallo en llamada", err);
+    console.error("[llm] complete falló", err);
     return null;
   }
 }

@@ -21,7 +21,9 @@
     "check:mail": "tsx scripts/check-mail-dns.ts",
     "setup": "prisma db push && tsx scripts/seed.ts",
     "test:sources": "tsx scripts/test-sources.ts",
-    "test:resolve": "tsx scripts/test-resolve.ts"
+    "test:resolve": "tsx scripts/test-resolve.ts",
+    "test:ai": "tsx scripts/test-ai.ts",
+    "test:ai:compat": "tsx scripts/test-ai-compat.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

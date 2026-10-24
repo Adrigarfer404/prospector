@@ -18,7 +18,44 @@ import {
   NoticeBox,
   PageHeader,
   SectionTitle,
+  Select,
 } from "@/components/ui";
+
+type AiProviderDTO = {
+  id: string;
+  label: string;
+  suggestedModels: string[];
+  nativeWebSearch: boolean;
+  docs: string;
+  needsApiKey: boolean;
+};
+
+type AiSettingsDTO = {
+  provider: string;
+  model: string;
+  webSearchModel: string;
+  webSearchProvider: string;
+  baseUrl: string;
+  hasApiKey: boolean;
+};
+
+type AiFormState = {
+  provider: string;
+  model: string;
+  webSearchModel: string;
+  webSearchProvider: string;
+  apiKey: string;
+  baseUrl: string;
+};
+
+const EMPTY_AI_FORM: AiFormState = {
+  provider: "minimax",
+  model: "MiniMax-M3",
+  webSearchModel: "MiniMax-M3.1-Flash",
+  webSearchProvider: "auto",
+  apiKey: "",
+  baseUrl: "",
+};
 
 type FormState = {
   name: string;
@@ -61,6 +98,17 @@ export default function SettingsPage() {
   /** Identidad que se está editando (si la hay, el guardado hace PATCH). */
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // Estado de la configuración de IA.
+  const [aiProviders, setAiProviders] = useState<AiProviderDTO[]>([]);
+  const [aiForm, setAiForm] = useState<AiFormState>(EMPTY_AI_FORM);
+  const [aiHasKey, setAiHasKey] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiResult, setAiResult] = useState<string | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+
+  const updateAi = (patch: Partial<AiFormState>) =>
+    setAiForm((current) => ({ ...current, ...patch }));
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -77,6 +125,66 @@ export default function SettingsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** Carga la configuración de IA del servidor. */
+  const loadAi = useCallback(async () => {
+    try {
+      const response = await apiGet<{
+        settings: AiSettingsDTO;
+        providers: AiProviderDTO[];
+      }>("/api/ai-settings");
+      setAiProviders(response.providers ?? []);
+      setAiHasKey(Boolean(response.settings?.hasApiKey));
+      setAiForm({
+        provider: response.settings?.provider ?? "minimax",
+        model: response.settings?.model ?? "MiniMax-M3",
+        webSearchModel: response.settings?.webSearchModel ?? "MiniMax-M3.1-Flash",
+        webSearchProvider: response.settings?.webSearchProvider ?? "auto",
+        apiKey: "",
+        baseUrl: response.settings?.baseUrl ?? "",
+      });
+    } catch (err) {
+      setAiError(errorMessage(err));
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAi();
+  }, [loadAi]);
+
+  /** Prueba el modelo (o la búsqueda web) sin guardar los cambios. */
+  const testAi = async (kind: "test" | "testSearch") => {
+    setAiBusy(true);
+    setAiResult(null);
+    setAiError(null);
+    try {
+      const response = await apiSend<{
+        test?: { ok: boolean; detail: string; model?: string };
+        search?: { ok: boolean; detail: string; hits?: number };
+      }>("/api/ai-settings", "POST", { ...aiForm, [kind]: true });
+      const result = kind === "test" ? response.test : response.search;
+      setAiResult(result ? result.detail : "Sin respuesta del servidor.");
+    } catch (err) {
+      setAiError(errorMessage(err));
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const saveAi = async () => {
+    setAiBusy(true);
+    setAiError(null);
+    setAiResult(null);
+    try {
+      await apiSend("/api/ai-settings", "POST", aiForm);
+      setAiResult("Configuración de IA guardada.");
+      await loadAi();
+    } catch (err) {
+      setAiError(errorMessage(err));
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   const update = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }));
   const payload = () => ({
@@ -186,6 +294,113 @@ export default function SettingsPage() {
           {notice}
         </div>
       ) : null}
+
+      <Card>
+        <SectionTitle hint="El modelo que redacta los emails, extrae prospectos y analiza la web">
+          Inteligencia artificial
+        </SectionTitle>
+
+        {aiError ? <p className="mb-3 text-sm text-red-600">{aiError}</p> : null}
+        {aiResult ? (
+          <div className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+            {aiResult}
+          </div>
+        ) : null}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Proveedor">
+            <Select
+              value={aiForm.provider}
+              onChange={(provider) => {
+                const info = aiProviders.find((p) => p.id === provider);
+                updateAi({
+                  provider,
+                  // Al cambiar de proveedor se propose un modelo que funcione.
+                  model: info?.suggestedModels[0] ?? aiForm.model,
+                  webSearchModel: info?.suggestedModels[0] ?? aiForm.webSearchModel,
+                });
+              }}
+              options={aiProviders.map((p) => ({ value: p.id, label: p.label }))}
+            />
+          </Field>
+          <Field
+            label="Modelo"
+            hint={
+              aiProviders.find((p) => p.id === aiForm.provider)?.docs ??
+              "Modelo que se usará para el análisis y la redacción."
+            }
+          >
+            <Input
+              value={aiForm.model}
+              onChange={(value) => updateAi({ model: value })}
+              placeholder="MiniMax-M3"
+            />
+          </Field>
+          <Field
+            label="Clave API"
+            hint={
+              aiHasKey
+                ? "Ya hay una clave guardada: déjala en blanco para no cambiarla."
+                : "En MiniMax no hace falta: se usa la sesión del sistema."
+            }
+          >
+            <Input
+              value={aiForm.apiKey}
+              onChange={(value) => updateAi({ apiKey: value })}
+              type="password"
+              placeholder={aiHasKey ? "•••••••• (guardada)" : "sk-..."}
+            />
+          </Field>
+          <Field
+            label="Endpoint (opcional)"
+            hint="Déjalo vacío para el de por defecto. Ej.: https://openrouter.ai/api/v1"
+          >
+            <Input
+              value={aiForm.baseUrl}
+              onChange={(value) => updateAi({ baseUrl: value })}
+              placeholder="(el del proveedor)"
+            />
+          </Field>
+          <Field
+            label="Modelo para buscar en la web"
+            hint="El que hace las búsquedas del AI Finder. En Claude y OpenRouter es el mismo."
+          >
+            <Input
+              value={aiForm.webSearchModel}
+              onChange={(value) => updateAi({ webSearchModel: value })}
+              placeholder="MiniMax-M3.1-Flash"
+            />
+          </Field>
+          <Field label="Motor de búsqueda web">
+            <Select
+              value={aiForm.webSearchProvider}
+              onChange={(webSearchProvider) => updateAi({ webSearchProvider })}
+              options={[
+                { value: "auto", label: "Automático (el del proveedor, o MiniMax)" },
+                { value: "minimax", label: "MiniMax" },
+                { value: "anthropic", label: "Claude (Anthropic)" },
+                { value: "openrouter", label: "OpenRouter" },
+                { value: "openai", label: "El del proveedor compatible con OpenAI" },
+                { value: "none", label: "Sin búsqueda web" },
+              ]}
+            />
+          </Field>
+        </div>
+
+        <NoticeBox message="La búsqueda web es lo que permite al AI Finder descubrir negocios reales. Si el proveedor elegido no trae búsqueda propia, el buscador automático cae a MiniMax si está disponible en el sistema." />
+
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          <Button onClick={() => void testAi("test")} disabled={aiBusy}>
+            Probar modelo
+          </Button>
+          <Button onClick={() => void testAi("testSearch")} disabled={aiBusy}>
+            Probar búsqueda web
+          </Button>
+          <Button variant="primary" onClick={saveAi} disabled={aiBusy}>
+            Guardar
+          </Button>
+        </div>
+      </Card>
 
       <Card>
         <SectionTitle hint="La cuenta desde la que salen tus emails y tu perfil de LinkedIn">

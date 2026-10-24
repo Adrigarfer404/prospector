@@ -139,6 +139,54 @@ Antes de activar una campaña con envío automático, revisa siempre la
 
 ---
 
+## Cambiar de modelo de IA (Claude, OpenRouter, cualquier API)
+
+El proveedor de IA es **configurable desde Ajustes → Inteligencia artificial**,
+sin tocar el código ni reiniciar nada. Sirve para lo que sea: redactar
+emails, extraer prospectos del Finder y hacer la búsqueda web.
+
+| Proveedor | Modelo por defecto | Credencial | Búsqueda web propia |
+|---|---|---|---|
+| **MiniMax** (por defecto) | `MiniMax-M3` | Ninguna: usa la sesión del runtime local | Sí |
+| **Anthropic (Claude)** | `claude-sonnet-4-5` | `x-api-key` de console.anthropic.com | Sí (`web_search_20250305`) |
+| **OpenRouter** | `anthropic/claude-sonnet-4.5` | `sk-or-…` de openrouter.ai/keys | Sí (plugin `web`) |
+| **Compatible con OpenAI** | el que le pongas | `Bearer <clave>` + endpoint | Si el endpoint acepta plugins |
+
+> Ojo con la **suscripción de Claude**: las planes Pro/Max de claude.ai **no
+> incluyen acceso a la API**. Para usar Claude desde la app hace falta la
+> clave de la API de Anthropic (se paga por token). Si prefieres no abrirte
+> una cuenta nueva, OpenRouter da acceso a Claude con una sola clave.
+
+La tarjeta de Ajustes tiene dos botones de prueba: **"Probar modelo"** (pide
+un JSON mínimo) y **"Probar búsqueda web"** (una búsqueda real). Las pruebas
+**no guardan nada**: se aplican de forma temporal y se descartan.
+
+La **búsqueda web es un servicio aparte del modelo**: cada proveedor la
+implementa de otra forma (tool del servidor en Anthropic, plugin en
+OpenRouter) y aquí se unifican en el mismo formato. Si eliges un proveedor sin
+búsqueda propia, el modo "Automático" cae a MiniMax si está disponible en el
+sistema; si no, el AI Finder avisa de que no puede descubrir prospectos.
+
+También se puede configurar por variables de entorno (tienen prioridad sobre
+lo guardado, por si despliegas en otro sitio):
+
+```bash
+AI_PROVIDER=openrouter
+AI_MODEL=anthropic/claude-sonnet-4.5
+AI_WEB_SEARCH_PROVIDER=openrouter
+AI_API_KEY=sk-or-...
+AI_BASE_URL=https://openrouter.ai/api/v1
+```
+
+Para comprobar qué está activo:
+
+```bash
+npm run test:ai           # JSON + búsqueda web con el proveedor activo
+npm run test:ai:compat    # autotest de la compatibilidad con APIs tipo OpenAI
+```
+
+---
+
 ## El motor de secuencias
 
 Una campaña es una lista ordenada de pasos:
@@ -258,6 +306,11 @@ src/lib/
   campaigns.ts               Motor de secuencias multicanal
   emailer.ts                 Envío SMTP
   pipeline.ts                Descubrir → persistir → enriquecer → puntuar
+  ai/                        Capa de IA intercambiable
+    index.ts                 Resolución de ajustes + despacho al proveedor
+    anthropic.ts             API de Messages (Anthropic y proxy MiniMax)
+    openai.ts                API de Chat Completions (OpenRouter y compatibles)
+    types.ts                 Proveedores, modelos y ajustes
   providers/
     contract.ts              Interfaces de los providers
     minimax.ts               Cliente MiniMax (texto + web_search)
@@ -268,6 +321,8 @@ src/app/api/                API REST
 src/app/(app)/               Interfaz
 scripts/seed.ts              Carga datos reales
 scripts/test-finder.ts       Test del AI Finder
+scripts/test-ai.ts           Test del proveedor de IA activo
+scripts/test-ai-compat.ts   Autotest de compatibilidad con APIs tipo OpenAI
 ```
 
 ---
