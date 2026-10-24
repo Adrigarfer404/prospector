@@ -251,7 +251,10 @@ export async function findProspectsViaWeb(opts: FinderOptions): Promise<FinderRe
     )
     .join("\n\n---\n\n");
 
-  const extraction = await completeJson<{ prospects?: ExtractedProspect[] }>(
+  // La extracción es el punto frágil: si el modelo devuelve un JSON cortado o
+  // una lista vacía, la búsqueda entera se pierde. Se reintenta hasta tres
+  // veces, recortando el contexto y pidiendo menos campos.
+  const extractionPrompt = (attempt: number) =>
     `Búsqueda: "${opts.query}" (sector: ${parsed.sector}, lugar: ${parsed.location}).
 Extrae hasta ${Math.max(10, limit)} negocios reales de ${parsed.sector} en ${parsed.location}.
 
@@ -259,11 +262,29 @@ RESULTADOS DE BÚSQUEDA:
 ${context}
 
 Responde con este JSON exacto:
-{"prospects":[{"name":"","website":null,"email":null,"phone":null,"address":null,"city":null,"region":null,"contactName":null,"jobTitle":null,"linkedinUrl":null,"usesExternalBooking":false,"signals":[],"notes":null}]}`,
-    { system: EXTRACTION_SYSTEM, maxTokens: 8000, temperature: 0.1 },
-  );
+{"prospects":[{"name":"","website":null,"email":null,"phone":null,"address":null,"city":null,"region":null,"contactName":null,"jobTitle":null,"linkedinUrl":null,"usesExternalBooking":false,"signals":[],"notes":null}]}
 
-  const prospects = extraction?.prospects ?? [];
+IMPORTANTE: omite los campos que no tengas dato (no los pongas a null) y no
+añadas texto fuera del JSON.${attempt > 0 ? " Devuelve al menos 5 negocios con name y website." : ""}`;
+
+  let prospects: ExtractedProspect[] = [];
+  for (let attempt = 1; attempt <= 3 && prospects.length === 0; attempt += 1) {
+    try {
+      const extraction = await completeJson<{ prospects?: ExtractedProspect[] }>(
+        extractionPrompt(attempt),
+        { system: EXTRACTION_SYSTEM, maxTokens: 8000, temperature: 0.1 },
+      );
+      prospects = extraction?.prospects ?? [];
+    } catch (err) {
+      warnings.push(
+        `La extracción falló (intento ${attempt}): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (prospects.length === 0 && attempt < 3) {
+      warnings.push(`La extracción no devolvió negocios (intento ${attempt}); se reintenta.`);
+    }
+  }
+
   const businesses: DiscoveredBusiness[] = [];
 
   for (const [index, prospect] of prospects.entries()) {
@@ -436,10 +457,21 @@ export async function resolveBusinessContact(input: {
       { system: EXTRACTION_SYSTEM, maxTokens: 1200, temperature: 0.1 },
     );
 
-    const website = extracted?.website ? normalizeUrl(extracted.website) : null;
+    // Si el modelo no devolvió nada utilizable se reintenta: un turno malo
+    // no puede dejar un negocio sin contactar.
+    let contact = extracted;
+    if (!contact?.website && !contact?.email && !contact?.phone) {
+      const retry = await completeJson<typeof contact>(
+        `Estos son los resultados de buscar "${input.name}" en ${where}:\n\n${context}\n\nExtrae los datos de contacto reales de ESTE negocio. Si no hay web, deja website a null. Responde con JSON: {"website":null,"email":null,"phone":null,"contactName":null,"jobTitle":null,"address":null,"city":null,"signals":[]}`,
+        { system: EXTRACTION_SYSTEM, maxTokens: 1200, temperature: 0.2 },
+      ).catch(() => null);
+      if (retry) contact = retry;
+    }
+
+    const website = contact?.website ? normalizeUrl(contact.website) : null;
     const domain = website ? domainOf(website) : null;
-    let email = extracted?.email && /@/.test(extracted.email) ? extracted.email.trim().toLowerCase() : null;
-    let phone = extracted?.phone ?? null;
+    let email = contact?.email && /@/.test(contact.email) ? contact.email.trim().toLowerCase() : null;
+    let phone = contact?.phone ?? null;
 
     // Segunda pasada: si ya tenemos la web pero no el email, se busca el
     // email por dominio. Los snippets de los buscadores suelen traerlo
@@ -471,11 +503,11 @@ export async function resolveBusinessContact(input: {
       website,
       email,
       phone,
-      contactName: extracted?.contactName ?? null,
-      jobTitle: extracted?.jobTitle ?? null,
-      address: extracted?.address ?? null,
-      city: extracted?.city ?? null,
-      signals: Array.isArray(extracted?.signals) ? extracted.signals.slice(0, 6) : [],
+      contactName: contact?.contactName ?? null,
+      jobTitle: contact?.jobTitle ?? null,
+      address: contact?.address ?? null,
+      city: contact?.city ?? null,
+      signals: Array.isArray(contact?.signals) ? contact.signals.slice(0, 6) : [],
       source: "web",
     };
   } catch (err) {
