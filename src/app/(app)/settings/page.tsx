@@ -58,6 +58,8 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
+  /** Identidad que se está editando (si la hay, el guardado hace PATCH). */
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,7 +79,6 @@ export default function SettingsPage() {
   }, [load]);
 
   const update = (patch: Partial<FormState>) => setForm((current) => ({ ...current, ...patch }));
-
   const payload = () => ({
     name: form.name.trim() || "Identidad",
     email: form.email.trim(),
@@ -117,10 +118,53 @@ export default function SettingsPage() {
     setFormError(null);
     setNotice(null);
     try {
-      await apiSend("/api/identities", "POST", payload());
+      if (editingId) {
+        await apiSend(`/api/identities/${editingId}`, "PATCH", payload());
+        setNotice("Identidad actualizada.");
+      } else {
+        await apiSend("/api/identities", "POST", payload());
+        setNotice("Identidad guardada.");
+      }
       setForm(EMPTY_FORM);
+      setEditingId(null);
       setTestResult(null);
-      setNotice("Identidad guardada.");
+      await load();
+    } catch (err) {
+      setFormError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** Carga una identidad en el formulario para editarla. */
+  const edit = (identity: (typeof identities)[number]) => {
+    setEditingId(identity.id);
+    setTestResult(null);
+    setFormError(null);
+    setForm({
+      name: identity.name,
+      email: identity.email,
+      smtpHost: identity.smtpHost ?? "",
+      smtpPort: String(identity.smtpPort ?? 587),
+      smtpUser: identity.smtpUser ?? "",
+      smtpPass: "",
+      smtpSecure: identity.smtpSecure ?? (identity.smtpPort ?? 587) === 465,
+      linkedinUrl: identity.linkedinUrl ?? "",
+      dailyLimit: String(identity.dailyLimit ?? 50),
+      isDefault: identity.isDefault,
+    });
+  };
+
+  const remove = async (identity: (typeof identities)[number]) => {
+    setSaving(true);
+    setFormError(null);
+    try {
+      await apiSend(`/api/identities/${identity.id}`, "DELETE");
+      if (editingId === identity.id) {
+        setForm(EMPTY_FORM);
+        setEditingId(null);
+      }
+      setNotice(`Identidad "${identity.name}" eliminada.`);
       await load();
     } catch (err) {
       setFormError(errorMessage(err));
@@ -196,6 +240,14 @@ export default function SettingsPage() {
                     </a>
                   ) : null}
                 </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="secondary" onClick={() => edit(identity)}>
+                    Editar
+                  </Button>
+                  <Button variant="danger" onClick={() => void remove(identity)}>
+                    Eliminar
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -205,7 +257,13 @@ export default function SettingsPage() {
       </Card>
 
       <Card>
-        <SectionTitle hint="Puedes crear varias identidades y rotar entre ellas">Nueva identidad</SectionTitle>
+        <SectionTitle hint="Puedes crear varias identidades y rotar entre ellas">
+          {editingId ? "Editando identidad" : "Nueva identidad"}
+        </SectionTitle>
+
+        {editingId ? (
+          <NoticeBox message="Estás editando una identidad existente. Si dejas la contraseña en blanco se conserva la que ya tenía." />
+        ) : null}
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Nombre">
@@ -316,11 +374,23 @@ export default function SettingsPage() {
         {formError ? <p className="mt-3 text-sm text-red-600">{formError}</p> : null}
 
         <div className="mt-4 flex flex-wrap justify-end gap-2">
+          {editingId ? (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setEditingId(null);
+                setForm(EMPTY_FORM);
+                setTestResult(null);
+              }}
+            >
+              Cancelar edición
+            </Button>
+          ) : null}
           <Button onClick={testConnection} disabled={testing}>
             {testing ? "Probando…" : "Probar conexión"}
           </Button>
           <Button variant="primary" onClick={save} disabled={saving}>
-            {saving ? "Guardando…" : "Guardar identidad"}
+            {saving ? "Guardando…" : editingId ? "Guardar cambios" : "Guardar identidad"}
           </Button>
         </div>
       </Card>
