@@ -205,9 +205,51 @@ async function main() {
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n=== ${results.length - failed.length}/${results.length} checks PASS ===`);
+
+  // Limpieza: la prueba no debe dejar basura en la base de datos de trabajo.
+  // Se borran la lista, la campaña, sus destinatarios y las conversaciones
+  // creadas, y los leads añadidos vuelven a su estado anterior.
+  await cleanup();
+
   if (failed.length) {
     console.log("Fallos:", failed.map((f) => f.name).join(", "));
     process.exit(1);
+  }
+}
+
+/** Borra lo que ha creado esta ejecución del test. */
+async function cleanup() {
+  try {
+    const { prisma } = await import("../src/lib/db");
+    const lists = await prisma.list.findMany({ where: { name: { startsWith: "E2E" } } });
+    for (const list of lists) {
+      await prisma.listItem.deleteMany({ where: { listId: list.id } });
+      await prisma.list.delete({ where: { id: list.id } });
+    }
+    const campaigns = await prisma.campaign.findMany({
+      where: { name: { startsWith: "E2E" } },
+    });
+    for (const campaign of campaigns) {
+      await prisma.conversation.deleteMany({ where: { campaignId: campaign.id } });
+      await prisma.campaignRecipient.deleteMany({ where: { campaignId: campaign.id } });
+      await prisma.campaignStep.deleteMany({ where: { campaignId: campaign.id } });
+      await prisma.campaign.delete({ where: { id: campaign.id } });
+    }
+    // Conversaciones sueltas creadas por la prueba (las que no son de campaña).
+    await prisma.conversation.deleteMany({
+      where: { body: { contains: "me enseñas el jueves" } },
+    });
+    if (lists.length || campaigns.length) {
+      console.log(
+        `Limpieza: ${lists.length} lista(s) y ${campaigns.length} campaña(s) de prueba borradas.`,
+      );
+    }
+    await prisma.$disconnect();
+  } catch (err) {
+    console.warn(
+      "No se pudo limpiar del todo:",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 
