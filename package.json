@@ -23,7 +23,8 @@
     "test:sources": "tsx scripts/test-sources.ts",
     "test:resolve": "tsx scripts/test-resolve.ts",
     "test:ai": "tsx scripts/test-ai.ts",
-    "test:ai:compat": "tsx scripts/test-ai-compat.ts"
+    "test:ai:compat": "tsx scripts/test-ai-compat.ts",
+    "backup": "tsx scripts/backup-db.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

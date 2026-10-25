@@ -53,6 +53,31 @@ npm run dev
 
 Abre <http://localhost:3000/finder>.
 
+### ¿Los datos se mantienen al cerrar y abrir la app?
+
+**Sí.** Todo vive en un único fichero SQLite: `prisma/dev.db`. Los leads, las
+empresas, las listas, las campañas, el inbox, las tareas, tus identidades (con
+la contraseña SMTP) y la configuración de IA persisten entre ejecuciones,
+reinicios y días. No hay nada en memoria ni en servicios externos.
+
+Dos avisos:
+
+- `prisma/dev.db` **no está en el repo** (está en el `.gitignore`): si clonas
+  en otro sitio empiezas con la base vacía y hay que correr `npm run setup`.
+- Para no perder los prospectos, copia el fichero de vez en cuando:
+
+  ```bash
+  npm run backup          # → backups/prospector-AAAAMMDD-HHMMSS.db
+  ```
+
+  Usa `VACUUM INTO`, así que la copia es consistente aunque la app esté
+  escribiendo en ese momento. Se conservan las 10 últimas. **No** uses
+  `prisma migrate reset` (borra la base) ni borres `prisma/dev.db` a mano.
+
+> `npm run setup` es idempotente: no duplica campañas ni listas, y si ya
+> existe un negocio sólo lo actualiza (deduplica por email y por
+> empresa+nombre).
+
 > La base `prisma/dev.db` no está en el repo (es un artefacto local con los
 > prospectos que has encontrado): se recrea con `npm run setup`. Para usar la
 > búsqueda web hace falta la sesión de MiniMax del sistema
