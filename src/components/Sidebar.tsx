@@ -131,8 +131,8 @@ function SidebarContent({
       {!collapsed ? (
         <div className="border-t border-slate-800 px-4 py-3">
           <p className="text-[11px] leading-relaxed text-slate-500">
-            Datos locales en SQLite. La prospección usa OpenStreetMap y las webs públicas de cada
-            negocio.
+            Datos locales en SQLite. La prospección usa la búsqueda web, el BORME y
+            las webs públicas de cada negocio.
           </p>
         </div>
       ) : null}

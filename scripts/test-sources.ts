@@ -1,6 +1,6 @@
 import { searchBusinesses } from "../src/lib/providers/discovery";
 async function main(){
-  const r = await searchBusinesses({ query: "fisioterapia en Madrid", location: "Madrid", radiusKm: 12, limit: 30, country: "ES" });
+  const r = await searchBusinesses({ query: "fisioterapia en Madrid", location: "Madrid", limit: 30, country: "ES" });
   console.log("interpretación:", r.interpretation);
   console.log("provider:", r.provider);
   const by: Record<string, number> = {};

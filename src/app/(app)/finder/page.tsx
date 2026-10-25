@@ -30,7 +30,7 @@ const EXAMPLES = [
 
 const PHASES = [
   "Buscando negocios en la web…",
-  "Contrastando con OpenStreetMap y el BORME…",
+  "Contrastando con el BORME…",
   "Enriqueciendo webs y correos de contacto…",
   "Puntuando los prospectos contra tu ICP…",
   "Guardando los resultados…",
@@ -39,7 +39,6 @@ const PHASES = [
 export default function FinderPage() {
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");
-  const [radiusKm, setRadiusKm] = useState("10");
   const [listName, setListName] = useState("");
   const [resolve, setResolve] = useState(true);
 
@@ -78,7 +77,6 @@ export default function FinderPage() {
       const response = await apiSend<FinderResult>("/api/finder", "POST", {
         query: query.trim(),
         ...(location.trim() ? { location: location.trim() } : {}),
-        ...(radiusKm ? { radiusKm: Number(radiusKm) } : {}),
         resolve,
       });
       setResult(response);
@@ -174,22 +172,12 @@ export default function FinderPage() {
             ))}
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-[1fr_160px_auto] sm:items-end">
+          <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <Field label="Ubicación" hint="Ciudad o barrio. Si lo dejas vacío se usa la del texto.">
               <Input
                 value={location}
                 onChange={setLocation}
                 placeholder="Madrid"
-                disabled={searching}
-              />
-            </Field>
-            <Field label="Radio (km)">
-              <Input
-                value={radiusKm}
-                onChange={setRadiusKm}
-                type="number"
-                min={1}
-                max={100}
                 disabled={searching}
               />
             </Field>
@@ -388,8 +376,8 @@ export default function FinderPage() {
                 <Icon name="target" className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
                 <span>
                   Los negocios se localizan con <strong>búsqueda web en tiempo real</strong> y se
-                  contrastan con <strong>OpenStreetMap</strong> y el <strong>BORME</strong> (registro
-                  mercantil) para ampliar el cobertura.
+                  contrastan con el <strong>BORME</strong> (registro mercantil) para ampliar la
+                  cobertura.
                 </span>
               </li>
               <li className="flex gap-2">
@@ -424,7 +412,7 @@ export default function FinderPage() {
 
       {result && result.leads > 0 ? (
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-          <Badge tone="indigo">Fuente: web + OpenStreetMap + BORME</Badge>
+          <Badge tone="indigo">Fuente: web + BORME</Badge>
           <Badge tone="slate">Web pública del negocio</Badge>
           <Badge tone="slate">Puntuación con tu ICP</Badge>
         </div>

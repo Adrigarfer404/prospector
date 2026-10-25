@@ -11,14 +11,8 @@
 export type DiscoveryQuery = {
   /** Texto libre en lenguaje natural, p.ej. "fisioterapeutas en Madrid". */
   query: string;
-  /** Categoría OSM ya resuelta, p.ej. "physiotherapist". */
-  category?: string;
-  /** Radio en km alrededor del centro. */
-  radiusKm?: number;
-  /** Centro de búsqueda (lat/lng) o nombre de ciudad a geocodificar. */
+  /** Nombre de ciudad o provincia para acotar la búsqueda. */
   location?: string;
-  latitude?: number;
-  longitude?: number;
   /** Tope de resultados. */
   limit?: number;
   /** País ISO para filtrar (default ES). */
@@ -28,7 +22,7 @@ export type DiscoveryQuery = {
 };
 
 export type DiscoveredBusiness = {
-  /** Clave estable para deduplicar (p.ej. osm id). */
+  /** Clave estable para deduplicar (p.ej. identificador del BORME). */
   sourceRef: string;
   source: string;
   name: string;

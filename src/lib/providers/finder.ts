@@ -339,7 +339,7 @@ añadas texto fuera del JSON.${attempt > 0 ? " Devuelve al menos 5 negocios con 
 
   return {
     businesses,
-    interpretation: `${businesses.length} negocios de ${parsed.sector} en ${parsed.location} encontrados con ${hits.length} resultados web revisados (OpenStreetMap/BORME se añaden como fuentes complementarias).`,
+    interpretation: `${businesses.length} negocios de ${parsed.sector} en ${parsed.location} encontrados con ${hits.length} resultados web revisados (el BORME se añade como fuente complementaria).`,
     warnings,
     searchQueries: prompts,
     hits,
