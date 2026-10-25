@@ -82,7 +82,7 @@ Dos avisos:
 > prospectos que has encontrado): se recrea con `npm run setup`. Para usar la
 > búsqueda web hace falta la sesión de MiniMax del sistema
 > (`~/.minimax/config.yaml` + `local-runtime.auth.json`); sin ella el Finder
-> cae a OpenStreetMap/BORME y avisa por los warnings.
+> cae al BORME y avisa por los warnings.
 
 > El seed tarda entre 2 y 6 minutos por consulta: hace búsquedas web reales y
 > verifica emails por SMTP. Para probar rápido sin red:
@@ -97,8 +97,6 @@ Dos avisos:
 |---|---|---|
 | **Búsqueda web (MiniMax `web_search`)** | Negocio + web + email + teléfono. Es la fuente principal: aporta el 100% de los leads contactables. | Las credenciales de MiniMax ya configuradas en tu máquina. |
 | **BORME (BOE)** | Sociedades de nueva constitución con actividad sanitaria, su domicilio, su CIF y el nombre de sus administradores. | Nada. |
-| **OpenStreetMap / Nominatim** | POI con teléfono y web. | Nada. |
-| **Overpass** | Todos los negocios etiquetados en un radio. **No accesible desde esta red** (406). | Red sin bloqueo. |
 | **Resolución de contactos** | Para los negocios que aún no tienen web (los del BORME): segunda búsqueda web por nombre + domicilio + actividad + administrador para sacar su web, email y teléfono. | Nada. |
 | **Hunter.io** | Emails con score. | `HUNTER_API_KEY` (opcional). |
 | **Crawler de la web del negocio** | Emails, teléfonos, equipo con nombre y apellidos, señales de agenda externa. | Nada. |
@@ -112,7 +110,6 @@ trae web ni email. Medido en "fisioterapia en Madrid":
 
 | Fuente | Encuentra | Con web o email |
 |---|---|---|
-| Nominatim | 21 negocios | 1-2 (y muchos se llaman literalmente "Fisioterapia") |
 | BORME | 9 constituciones sanitarias (FISILISTIC SL, ALENTO PSICOLOGIA SLP...) | 0 |
 | Web search | 15-25 negocios con web, email y teléfono | todos |
 
@@ -340,7 +337,7 @@ src/lib/
     contract.ts              Interfaces de los providers
     minimax.ts               Cliente MiniMax (texto + web_search)
     finder.ts                AI Finder (búsqueda web + extracción)
-    discovery/               Overpass, Nominatim, BORME
+    discovery/               BORME
     enrichment/              Crawler de webs, emails, SMTP, Hunter
 src/app/api/                API REST
 src/app/(app)/               Interfaz
@@ -384,7 +381,7 @@ tareas manuales → respuesta en inbox → export CSV.
 ## Notas de operación
 
 - **La búsqueda web usa tu sesión de MiniMax** (`~/.minimax/config.yaml` +
-  `local-runtime.auth.json`). Si no está, el Finder cae a OpenStreetMap/BORME
+  `local-runtime.auth.json`). Si no está, el Finder cae al BORME
   y avisa por los warnings.
 - **Verificación SMTP**: se conecta al MX y pregunta por el buzón, **sin enviar
   ningún correo**. Algunos operadores bloquean el puerto 25; si es tu caso,
@@ -403,8 +400,6 @@ Esto es lo que **no** funciona o va flojo, con datos de esta máquina:
 
 | Limitación | Detalle |
 |---|---|
-| **Overpass no es accesible** | `overpass-api.de` devuelve 406/502 desde esta red y los mirrors están caídos o sin datos de España. La integración está implementada y hace *probe* con timeout corto, pero cae a Nominatim + BORME + búsqueda web. |
-| **Cobertura de OSM en España es escasa** | "fisioterapia Madrid" da ~40 places; "podólogo Bilbao" da 0. Para volumen hay que apoyarse en la búsqueda web y el BORME. |
 | **Cobertura del BORME es provincial** | Cada provincia publica en rotación: un día puede no haber nada en Valencia. El proveedor barre una ventana de 10 días por provincia. |
 | **Verificación SMTP** | Funciona de verdad en la mayoría de dominios (`verified` con RCPT TO 250). Los hosted en IONOS responden `554 Bad DNS PTR` y quedan como `unverified`, no como error. |
 | **Sin scraping de LinkedIn** | Deliberado. Se detectan URLs públicas de perfiles para que las revises, pero no se automatiza ni se hace login. |

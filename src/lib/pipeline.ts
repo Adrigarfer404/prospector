@@ -17,7 +17,6 @@ export type DiscoverOptions = {
   workspaceId: string;
   query: string;
   location?: string;
-  radiusKm?: number;
   limit?: number;
   /** Cuántos negocios enriquecer (crawl de web + emails). El resto solo se guarda. */
   enrichLimit?: number;
@@ -315,7 +314,11 @@ export async function upsertLead(
   return prisma.lead.create({ data: { workspaceId, ...payload } });
 }
 
-export async function scoreAndSaveLead(
+/**
+ * Calcula el fit de un lead contra el ICP sin tocar la base de datos.
+ * Sirve para previsualizar cambios de scoring antes de guardarlos.
+ */
+export async function computeLeadScore(
   workspaceId: string,
   leadId: string,
   criteria: IcpCriterion[],
@@ -355,9 +358,20 @@ export async function scoreAndSaveLead(
 
   const result = scoreLead(ctx, criteria);
   const profile = detectProfile(ctx);
+  return { ...result, profile };
+}
+
+export async function scoreAndSaveLead(
+  workspaceId: string,
+  leadId: string,
+  criteria: IcpCriterion[],
+) {
+  const result = await computeLeadScore(workspaceId, leadId, criteria);
+  if (!result) return null;
+
   await prisma.lead.update({
     where: { id: leadId },
-    data: { score: result.score, scoreReason: result.reason, profile },
+    data: { score: result.score, scoreReason: result.reason, profile: result.profile },
   });
   return result;
 }
@@ -392,20 +406,20 @@ export async function discoverProspects(opts: DiscoverOptions): Promise<Discover
     );
   }
 
-  // Fuente 2: OpenStreetMap + Nominatim + BORME (complementaria).
+  // Fuente 2: BORME (complementaria). Aporta constituciones recientes de
+  // empresas sanitarias que todavía no tienen web.
   try {
-    const osm = await searchBusinesses({
+    const borme = await searchBusinesses({
       query: opts.query,
       location: opts.location,
-      radiusKm: opts.radiusKm ?? 15,
       limit: Math.min(opts.limit ?? 40, 30),
       country: "ES",
     });
-    warnings.push(...osm.warnings);
-    if (osm.businesses.length) sources.push("OpenStreetMap/BORME");
+    warnings.push(...borme.warnings);
+    if (borme.businesses.length) sources.push("BORME");
     const known = new Set(businesses.map((b) => `${b.name}|${b.domain ?? ""}`));
     const extra: DiscoveredBusiness[] = [];
-    for (const business of osm.businesses) {
+    for (const business of borme.businesses) {
       const key = `${business.name}|${business.domain ?? ""}`;
       if (known.has(key)) continue;
       known.add(key);
@@ -415,15 +429,11 @@ export async function discoverProspects(opts: DiscoverOptions): Promise<Discover
     // la búsqueda web y las constituciones del BORME nunca entran en la lista.
     businesses = interleaveBySource([
       { businesses, source: "web" },
-      { businesses: extra.filter((b) => b.source === "osm"), source: "osm" },
-      { businesses: extra.filter((b) => b.source === "nominatim"), source: "nominatim" },
       { businesses: extra.filter((b) => b.source === "borme"), source: "borme" },
     ]);
-    if (!interpretation) interpretation = osm.interpretation;
+    if (!interpretation) interpretation = borme.interpretation;
   } catch (err) {
-    warnings.push(
-      `OpenStreetMap/BORME falló: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    warnings.push(`El BORME falló: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   businesses = businesses.slice(0, opts.limit ?? 40);

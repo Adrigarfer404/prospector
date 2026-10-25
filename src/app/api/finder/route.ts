@@ -9,7 +9,6 @@ export const maxDuration = 300;
 const BodySchema = z.object({
   query: z.string().min(3, "Describe a quién buscas (mínimo 3 caracteres)"),
   location: z.string().optional(),
-  radiusKm: z.number().min(1).max(100).optional(),
   limit: z.number().min(1).max(200).optional(),
   enrichLimit: z.number().min(0).max(50).optional(),
   /** Cuántos negocios sin web se buscan por nombre para hallar su contacto. */
@@ -58,7 +57,6 @@ export async function POST(request: Request) {
       workspaceId: workspace.id,
       query: input.query,
       location: input.location,
-      radiusKm: input.radiusKm,
       limit: input.limit ?? 20,
       // Por defecto se analizan todas las webs encontradas (hasta 18): cada
       // web analizada es un prospecto más con email y teléfono.
