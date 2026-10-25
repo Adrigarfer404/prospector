@@ -60,21 +60,48 @@ const OWNER_WORDS = [
   "administrador",
 ];
 
-const CLINICAL_WORDS = [  "fisioterapeut",
+/**
+ * Palabras que identifican un perfil clínico/sanitario.
+ *
+ * Se incluyen las formas en inglés porque el sector se etiqueta a menudo así
+ * ("physiotherapist", "dentist") y con sólo las formas en español ("fisioterapeut")
+ * se perdían más de la mitad de los prospectos: una clínica llamada
+ * "Fisioterapia Puerta del Sol" quedaba como "no es del sector salud".
+ */
+const CLINICAL_WORDS = [
+  // --- Español ---
+  "fisioterapeut",
+  "fisioterapia",
+  "fisio",
   "nutricion",
   "dietista",
   "psicolog",
   "osteopat",
   "logoped",
-  "dentist",
+  "odontolog",
   "podolog",
   "traumatolog",
   "quiropract",
   "acupunct",
   "homeopat",
+  "medic",
+  "ginecolog",
+  "urolog",
+  "dermatolog",
+  "pediatr",
+  "enfermer",
+  "farmac",
   "coach",
   "entrenador",
   "preparador",
+  // --- Inglés (así se etiqueta el sector en muchas webs) ---
+  "physiotherap",
+  "nutritionist",
+  "psycholog",
+  "podiatrist",
+  "dentist",
+  "dental",
+  "clinic",
 ];
 
 /**
@@ -89,6 +116,75 @@ function norm(v: unknown): string {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+}
+
+/**
+ * Etiquetas que se arrastran de la web y NO son un cargo real ("Contacto",
+ * "Recepción"). Con ellas no se puede decir si el lead decide él mismo: el
+ * criterio queda sin datos en lugar de darse por incumplido.
+ */
+const GENERIC_TITLE_WORDS = [
+  "contacto",
+  "contact",
+  "info",
+  "informacion",
+  "atencion al cliente",
+  "recepcion",
+  "recepcionista",
+  "administracion",
+  "admin",
+  "secretaria",
+  "secretario",
+  "web",
+  "correo",
+  "email",
+  "telefono",
+  "general",
+  "sin cargo",
+  "n a",
+  "na",
+  "none",
+  "sin datos",
+  "formulario",
+  "soporte",
+  "ayuda",
+  "citas",
+  "reserva",
+  "reservas",
+  "pedir cita",
+  "consulta",
+];
+
+const GENERIC_TITLES = new Set(GENERIC_TITLE_WORDS.map((word) => norm(word)));
+
+/**
+ * ¿Hay información suficiente para evaluar este campo?
+ *
+ * Sin datos no se puede emitir un veredicto: el criterio queda "sin datos" y
+ * ni suma ni penaliza. Antes un dato ausente se puntuaba igual que un "no
+ * cumple", lo que hundía la puntuación de leads que simplemente no lo tenían.
+ */
+function hasData(field: string, ctx: ScoreContext): boolean {
+  switch (field) {
+    case "title": {
+      const title = norm(ctx.title);
+      return title.length > 0 && !GENERIC_TITLES.has(title);
+    }
+    case "company":
+      return norm(ctx.company).length > 0;
+    case "industry":
+      return norm(ctx.industry).length > 0;
+    case "city":
+      return norm(ctx.city).length > 0;
+    case "region":
+      return norm(ctx.region).length > 0;
+    case "employees":
+      return ctx.employees !== null && ctx.employees !== undefined;
+    case "signals":
+      return ctx.signals.length > 0;
+    default:
+      return true;
+  }
 }
 
 function asArray(value: unknown): string[] {
@@ -192,6 +288,16 @@ export function evaluateCriterion(criterion: IcpCriterion, ctx: ScoreContext): b
   }
 }
 
+/**
+ * Pares de criterios que son el reverso el uno del otro. Si uno se ha
+ * cumplido, no tiene sentido decir "no detectado" del otro: "tiene web" y
+ * "sin web" no pueden contarse a la vez en la misma explicación.
+ */
+const COMPLEMENTARY_FIELDS: Record<string, string> = {
+  hasWebsite: "noWebsite",
+  noWebsite: "hasWebsite",
+};
+
 export function scoreLead(
   ctx: ScoreContext,
   criteria: IcpCriterion[],
@@ -204,33 +310,62 @@ export function scoreLead(
   let score = base;
   const matched: string[] = [];
   const missed: string[] = [];
+  const missedFields: string[] = [];
+  const matchedFields = new Set<string>();
+  const unknown: string[] = [];
+  const excluded: string[] = [];
 
   for (const criterion of criteria) {
     const weight = criterion.weight ?? positive;
     const label =
       criterion.label ?? `${criterion.field} ${criterion.op}${criterion.value !== undefined ? ` ${criterion.value}` : ""}`;
-    const ok = evaluateCriterion(criterion, ctx);
-    if (ok) {
-      // Un peso negativo = criterio de exclusión: cumplirlo resta.
+
+    // Peso negativo = criterio de exclusión: sólo resta si se cumple.
+    if (weight < 0) {
+      if (evaluateCriterion(criterion, ctx)) {
+        score += weight;
+        excluded.push(label);
+      }
+      continue;
+    }
+
+    // Sin datos no hay veredicto: ni suma ni penaliza.
+    if (!hasData(criterion.field, ctx)) {
+      unknown.push(label);
+      continue;
+    }
+
+    if (evaluateCriterion(criterion, ctx)) {
       score += weight;
       matched.push(label);
+      matchedFields.add(criterion.field);
     } else {
-      // Los criterios de exclusión no penalizan cuando NO se cumplen.
       score -= criterion.penalty ?? negative;
       missed.push(label);
+      missedFields.push(criterion.field);
     }
   }
 
   score = Math.max(0, Math.min(100, Math.round(score)));
 
+  // Se ocultan los criterios "no detectados" cuyo reverso ya se ha cumplido.
+  const visibleMissed = missed.filter((_, index) => {
+    const complement = COMPLEMENTARY_FIELDS[missedFields[index] ?? ""];
+    return !complement || !matchedFields.has(complement);
+  });
+
   const reason = [
     matched.length ? `Cumple: ${matched.slice(0, 3).join("; ")}` : "Sin criterios cumplidos",
-    missed.length ? `No cumple: ${missed.slice(0, 2).join("; ")}` : "",
+    // "No detectado" = rasgo de tu ICP que NO hemos encontrado en este lead.
+    // No significa que esté excluido: significa que no hemos visto prueba.
+    visibleMissed.length ? `No detectado: ${visibleMissed.slice(0, 2).join("; ")}` : "",
+    unknown.length ? `Sin datos: ${unknown.slice(0, 2).join("; ")}` : "",
+    excluded.length ? `Excluido: ${excluded.join("; ")}` : "",
   ]
     .filter(Boolean)
     .join(". ");
 
-  return { score, reason, matched, missed };
+  return { score, reason, matched, missed: visibleMissed, unknown, excluded };
 }
 
 /**

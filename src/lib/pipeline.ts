@@ -315,7 +315,11 @@ export async function upsertLead(
   return prisma.lead.create({ data: { workspaceId, ...payload } });
 }
 
-export async function scoreAndSaveLead(
+/**
+ * Calcula el fit de un lead contra el ICP sin tocar la base de datos.
+ * Sirve para previsualizar cambios de scoring antes de guardarlos.
+ */
+export async function computeLeadScore(
   workspaceId: string,
   leadId: string,
   criteria: IcpCriterion[],
@@ -355,9 +359,20 @@ export async function scoreAndSaveLead(
 
   const result = scoreLead(ctx, criteria);
   const profile = detectProfile(ctx);
+  return { ...result, profile };
+}
+
+export async function scoreAndSaveLead(
+  workspaceId: string,
+  leadId: string,
+  criteria: IcpCriterion[],
+) {
+  const result = await computeLeadScore(workspaceId, leadId, criteria);
+  if (!result) return null;
+
   await prisma.lead.update({
     where: { id: leadId },
-    data: { score: result.score, scoreReason: result.reason, profile },
+    data: { score: result.score, scoreReason: result.reason, profile: result.profile },
   });
   return result;
 }

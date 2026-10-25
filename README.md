@@ -373,6 +373,8 @@ npm run test:e2e                                # flujo completo contra la API (
 
 npm run cleanup                                 # limpia duplicados y leads inservibles
 npm run cleanup -- --dry                        # sólo informa
+npm run rescore                                # re-puntúa los leads contra el ICP actual
+npm run rescore -- --dry                       # sólo informa de los cambios de score
 ```
 
 `npm run test:e2e` recorre: analítica → playbook → leads con email → alta en

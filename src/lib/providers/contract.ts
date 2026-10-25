@@ -137,8 +137,14 @@ export type LeadScoreInput = {
 export type LeadScore = {
   score: number;
   reason: string;
+  /** Criterios del ICP que el lead cumple. */
   matched: string[];
+  /** Criterios del ICP que se han comprobado y NO se cumplen. */
   missed: string[];
+  /** Criterios del ICP que no se han podido evaluar (falta información). */
+  unknown: string[];
+  /** Criterios de exclusión que se han cumplido (el lead queda descartado). */
+  excluded: string[];
 };
 
 export interface Scorer {
