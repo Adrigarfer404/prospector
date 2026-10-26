@@ -17,32 +17,33 @@ model Workspace {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  playbook   Playbook?
-  identities Identity[]
-  lists      List[]
-  leads      Lead[]
-  companies  Company[]
-  campaigns  Campaign[]
-  inbox      Conversation[]
-  activities Activity[]
-  blocklist  BlocklistEntry[]
-  savedViews SavedView[]
-  jobs       Job[]
-  aiSetting  AiSetting?
+  playbook    Playbook?
+  identities  Identity[]
+  lists       List[]
+  leads       Lead[]
+  companies   Company[]
+  campaigns   Campaign[]
+  inbox       Conversation[]
+  activities  Activity[]
+  blocklist   BlocklistEntry[]
+  savedViews  SavedView[]
+  jobs        Job[]
+  sweepStates SweepState[]
+  aiSetting   AiSetting?
 }
 
 /// Configuración del modelo de lenguaje: proveedor, modelo y credenciales.
 /// Permite cambiar de MiniMax a Claude, OpenRouter o cualquier API
 /// compatible con OpenAI sin tocar el código.
 model AiSetting {
-  id          String   @id @default(cuid())
-  workspaceId String   @unique
+  id          String    @id @default(cuid())
+  workspaceId String    @unique
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  provider          String  @default("minimax")   // minimax|anthropic|openrouter|openai
+  provider          String  @default("minimax") // minimax|anthropic|openrouter|openai
   model             String  @default("MiniMax-M3")
   webSearchModel    String  @default("MiniMax-M3.1-Flash")
-  webSearchProvider String  @default("auto")     // auto|minimax|anthropic|openrouter|none
+  webSearchProvider String  @default("auto") // auto|minimax|anthropic|openrouter|none
   apiKey            String?
   baseUrl           String?
 
@@ -51,108 +52,131 @@ model AiSetting {
 }
 
 model Company {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  name          String
-  domain        String?
-  website       String?
-  industry      String?
-  description   String?
-  size          String?
-  employees     Int?
-  foundingYear  Int?
-  headquarters  String?
-  city          String?
-  region        String?
-  country       String  @default("ES")
-  phoneNumber   String?
-  linkedinUrl   String?
-  logoUrl       String?
-  source        String  @default("manual")
-  sourceRef     String?
-  tags          String  @default("[]") // JSON string[]
-  enrichment    String  @default("{}") // JSON object
-  score         Int     @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  name         String
+  /// Nombre normalizado (sin acentos ni sufijos societarios): permite
+  /// deduplicar "CLINICA FISIO SL" contra "Clínica Fisio, S.L.".
+  nameKey      String?
+  /// Clave idempotente por fuente: "maps:ChIJ…", "borme:BORME-A-…", "web:dominio".
+  /// Es la columna que evita duplicados en un barrido diario: el unique con
+  /// `domain` no protege cuando domain es NULL (en SQLite NULL != NULL).
+  dedupeKey    String?
+  domain       String?
+  website      String?
+  industry     String?
+  description  String?
+  size         String?
+  employees    Int?
+  foundingYear Int?
+  headquarters String?
+  city         String?
+  region       String?
+  country      String    @default("ES")
+  phoneNumber  String?
+  linkedinUrl  String?
+  logoUrl      String?
+  source       String    @default("manual")
+  sourceRef    String?
+  tags         String    @default("[]") // JSON string[]
+  enrichment   String    @default("{}") // JSON object
+  score        Int       @default(0)
+  /// Primera vez que se vio el negocio en cualquier fuente.
+  firstSeenAt  DateTime  @default(now())
+  /// Última vez que una pasada de descubrimiento lo volvió a ver.
+  lastSeenAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   leads Lead[]
 
   @@unique([workspaceId, domain, name])
+  @@unique([workspaceId, dedupeKey])
   @@index([workspaceId])
+  @@index([workspaceId, nameKey])
+  @@index([workspaceId, sourceRef])
 }
 
 model Lead {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   companyId   String?
-  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  company     Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
 
-  firstName    String?
-  lastName     String?
-  fullName     String?
-  jobTitle     String?
-  department   String?
-  seniority    String?
-  email        String?
-  phoneNumber  String?
-  linkedinUrl  String?
-  website      String?
-  city         String?
-  region       String?
-  country      String  @default("ES")
-  source       String  @default("manual")
-  sourceRef    String?
-  status       String  @default("new") // new|researched|contacted|replied|qualified|unsubscribed|bounced|do_not_contact
-  score        Int     @default(0)
-  scoreReason  String?
-  /** Perfil comercial calculado: autonomo|negocio_sin_crm|con_crm|cadena|plataforma|desconocido */
-  profile      String  @default("desconocido")
-  fitNotes     String?
-  enrichment   String  @default("{}") // JSON object
-  aiSummary    String?
-  notes        String?
+  firstName       String?
+  lastName        String?
+  fullName        String?
+  /// Nombre normalizado: deduplica a la misma persona aunque cambie la
+  /// grafía ("Dra. Ana Ruiz" vs "Ana Ruiz Pérez").
+  nameKey         String?
+  jobTitle        String?
+  department      String?
+  seniority       String?
+  email           String?
+  phoneNumber     String?
+  linkedinUrl     String?
+  website         String?
+  city            String?
+  region          String?
+  country         String    @default("ES")
+  source          String    @default("manual")
+  sourceRef       String?
+  status          String    @default("new") // new|researched|contacted|replied|qualified|unsubscribed|bounced|do_not_contact
+  score           Int       @default(0)
+  scoreReason     String?
+  /**
+   * Perfil comercial calculado: autonomo|negocio_sin_crm|con_crm|cadena|plataforma|desconocido
+   */
+  profile         String    @default("desconocido")
+  fitNotes        String?
+  enrichment      String    @default("{}") // JSON object
+  aiSummary       String?
+  notes           String?
   lastContactedAt DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  firstSeenAt     DateTime  @default(now())
+  lastSeenAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  emails       LeadEmail[]
-  listItems    ListItem[]
-  recipients   CampaignRecipient[]
+  emails        LeadEmail[]
+  listItems     ListItem[]
+  recipients    CampaignRecipient[]
   conversations Conversation[]
 
   @@index([workspaceId, status])
   @@index([workspaceId, email])
   @@index([companyId])
+  @@index([workspaceId, nameKey])
+  @@index([workspaceId, sourceRef])
 }
 
 model LeadEmail {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   leadId     String
-  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead       Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
   email      String
-  source     String   @default("pattern") // pattern|crawl|hunter|manual|import
-  status     String   @default("unverified") // verified|unverified|invalid|catch_all|risky
-  confidence Int      @default(0)
+  source     String    @default("pattern") // pattern|crawl|hunter|manual|import
+  status     String    @default("unverified") // verified|unverified|invalid|catch_all|risky
+  confidence Int       @default(0)
   verifiedAt DateTime?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
 
   @@unique([leadId, email])
   @@index([email])
 }
 
 model List {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name        String
   description String?
   icp         String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   items ListItem[]
 
@@ -175,19 +199,19 @@ model ListItem {
 }
 
 model Campaign {
-  id          String  @id @default(cuid())
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  name        String
-  description String?
-  status      String  @default("draft") // draft|active|paused|completed
-  channel     String  @default("email") // email|linkedin|mixed
-  objective   String?
-  dailyLimit  Int     @default(50)
-  autoSend    Boolean @default(false)
-  aiPersonalize Boolean @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String    @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name          String
+  description   String?
+  status        String    @default("draft") // draft|active|paused|completed
+  channel       String    @default("email") // email|linkedin|mixed
+  objective     String?
+  dailyLimit    Int       @default(50)
+  autoSend      Boolean   @default(false)
+  aiPersonalize Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   steps      CampaignStep[]
   recipients CampaignRecipient[]
@@ -196,68 +220,68 @@ model Campaign {
 }
 
 model CampaignStep {
-  id         String  @id @default(cuid())
-  campaignId String
-  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  order      Int
-  type       String  // email|linkedin_connect|linkedin_message|linkedin_like|call|wait|condition
-  name       String?
-  delayDays  Int     @default(0)
-  delayHours Int     @default(0)
-  subject    String?
-  body       String?
-  aiEnabled  Boolean @default(false)
-  stopOnReply Boolean @default(true)
-  settings   String  @default("{}") // JSON object
-  createdAt  DateTime @default(now())
+  id          String   @id @default(cuid())
+  campaignId  String
+  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  order       Int
+  type        String // email|linkedin_connect|linkedin_message|linkedin_like|call|wait|condition
+  name        String?
+  delayDays   Int      @default(0)
+  delayHours  Int      @default(0)
+  subject     String?
+  body        String?
+  aiEnabled   Boolean  @default(false)
+  stopOnReply Boolean  @default(true)
+  settings    String   @default("{}") // JSON object
+  createdAt   DateTime @default(now())
 
   @@index([campaignId, order])
 }
 
 model CampaignRecipient {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   campaignId  String
-  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaign    Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   leadId      String
-  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  status      String   @default("pending") // pending|sending|sent|replied|failed|booked|skipped
-  currentStep Int      @default(0)
-  sentCount   Int      @default(0)
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  status      String    @default("pending") // pending|sending|sent|replied|failed|booked|skipped
+  currentStep Int       @default(0)
+  sentCount   Int       @default(0)
   lastSentAt  DateTime?
   repliedAt   DateTime?
   error       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@unique([campaignId, leadId])
   @@index([campaignId, status])
 }
 
 model Conversation {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   leadId      String?
-  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  lead        Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
   campaignId  String?
-  channel     String  @default("email") // email|linkedin|call|note
-  direction   String  @default("inbound") // inbound|outbound
+  channel     String    @default("email") // email|linkedin|call|note
+  direction   String    @default("inbound") // inbound|outbound
   subject     String?
   body        String
-  status      String  @default("open") // open|replied|closed|booked
-  read        Boolean @default(false)
+  status      String    @default("open") // open|replied|closed|booked
+  read        Boolean   @default(false)
   sentiment   String?
   aiSummary   String?
   externalId  String?
   sentAt      DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   @@index([workspaceId, status])
   @@index([leadId])
 }
 
 model Identity {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name        String
@@ -266,82 +290,103 @@ model Identity {
   smtpPort    Int?
   smtpUser    String?
   smtpPass    String?
-  smtpSecure  Boolean @default(true)
+  smtpSecure  Boolean   @default(true)
   linkedinUrl String?
-  dailyLimit  Int     @default(50)
-  isDefault   Boolean @default(false)
-  channels    String  @default("[\"email\"]") // JSON string[]
-  createdAt   DateTime @default(now())
+  dailyLimit  Int       @default(50)
+  isDefault   Boolean   @default(false)
+  channels    String    @default("[\"email\"]") // JSON string[]
+  createdAt   DateTime  @default(now())
 
   @@index([workspaceId])
 }
 
 model Playbook {
-  id            String  @id @default(cuid())
-  workspaceId   String  @unique
-  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  ourCompany    String  @default("AgendaOS")
-  ourOffer      String?
-  ourValue      String?
-  icpSummary    String?
-  icpCriteria   String  @default("[]") // JSON array of {field, op, value}
-  disqualified  String  @default("[]") // JSON array
-  proofPoints   String  @default("[]") // JSON array
-  tone          String  @default("profesional y cercano")
-  language      String  @default("es")
-  cta           String?
-  signature     String?
-  updatedAt     DateTime @updatedAt
+  id           String    @id @default(cuid())
+  workspaceId  String    @unique
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  ourCompany   String    @default("AgendaOS")
+  ourOffer     String?
+  ourValue     String?
+  icpSummary   String?
+  icpCriteria  String    @default("[]") // JSON array of {field, op, value}
+  disqualified String    @default("[]") // JSON array
+  proofPoints  String    @default("[]") // JSON array
+  tone         String    @default("profesional y cercano")
+  language     String    @default("es")
+  cta          String?
+  signature    String?
+  updatedAt    DateTime  @updatedAt
 }
 
 model Activity {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   type        String
   subject     String?
-  payload     String  @default("{}") // JSON object
-  createdAt   DateTime @default(now())
+  payload     String    @default("{}") // JSON object
+  createdAt   DateTime  @default(now())
 
   @@index([workspaceId, createdAt])
 }
 
 model BlocklistEntry {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   type        String // email|domain|phone|linkedin|name
   value       String
   reason      String?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   @@unique([workspaceId, type, value])
 }
 
 model SavedView {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   entity      String
   name        String
-  filters     String  @default("{}") // JSON object
-  createdAt   DateTime @default(now())
+  filters     String    @default("{}") // JSON object
+  createdAt   DateTime  @default(now())
 
   @@unique([workspaceId, entity, name])
 }
 
 model Job {
-  id          String  @id @default(cuid())
+  id          String    @id @default(cuid())
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   type        String
-  status      String  @default("queued") // queued|running|done|error
-  progress    Int     @default(0)
-  total       Int     @default(0)
+  status      String    @default("queued") // queued|running|done|error
+  progress    Int       @default(0)
+  total       Int       @default(0)
   message     String?
-  result      String  @default("{}") // JSON object
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  result      String    @default("{}") // JSON object
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([workspaceId, status])
+}
+
+/// Cursor del barrido diario por celdas (categoría × provincia).
+/// Guarda dónde se quedó la pasada anterior para continuar sin repetir.
+model SweepState {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Fuente del barrido: "maps" | "borme"
+  source      String    @default("maps")
+  /// Índice de la celda siguiente dentro de la matriz.
+  cursor      Int       @default(0)
+  /// Tamaño total de la matriz.
+  total       Int       @default(0)
+  lastRunAt   DateTime?
+  /// Estadísticas de la última pasada (JSON object).
+  stats       String    @default("{}")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([workspaceId, source])
 }

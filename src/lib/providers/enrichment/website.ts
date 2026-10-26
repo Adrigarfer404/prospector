@@ -9,6 +9,7 @@
 import * as cheerio from "cheerio";
 import * as iconv from "iconv-lite";
 import type { WebsiteContactResult, WebsiteCrawler } from "../contract";
+import { stripAccents } from "../../text";
 
 const BROWSER_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -228,12 +229,7 @@ export const MEDICAL_CONTEXT_WORDS = [
 ];
 
 /** Quita acentos y minúsculas para comparar palabras. */
-export function stripAccents(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-}
+export { stripAccents } from "../../text";
 
 /**
  * Tokens de servicio de 8+ letras: si una palabra del candidato las contiene,
