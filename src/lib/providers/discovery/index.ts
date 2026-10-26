@@ -15,8 +15,11 @@ import type {
   DiscoveryResult,
 } from "../contract";
 import { searchBorme } from "./borme";
+import { searchMaps } from "./maps";
 
 export { searchBorme } from "./borme";
+export { searchMaps } from "./maps";
+export { outscraperConfigured } from "./outscraper";
 
 export const DEFAULT_LIMIT = 50;
 
@@ -117,18 +120,42 @@ export async function searchBusinesses(query: DiscoveryQuery): Promise<Discovery
   warnings.push(...(bormeResult?.warnings ?? []));
 
   const bormeBusinesses = bormeResult?.businesses ?? [];
-  const merged = dedupeBusinesses(bormeBusinesses);
+
+  // Fuente opcional: Google Maps (opt-in). Aporta el censo de negocios que la
+  // búsqueda web no alcanza (la cola larga) y dos señales que nadie más da:
+  // rating y número de reseñas.
+  let mapsResult: DiscoveryResult | null = null;
+  if (query.includeMaps) {
+    try {
+      mapsResult = await searchMaps(query, {
+        limit: Math.min(query.limit ?? DEFAULT_LIMIT, 50),
+        ...(query.minMapsReviews !== undefined ? { minReviews: query.minMapsReviews } : {}),
+      });
+      warnings.push(...mapsResult.warnings);
+    } catch (err) {
+      warnings.push(
+        `Google Maps falló: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  const mapsBusinesses = mapsResult?.businesses ?? [];
+  const merged = dedupeBusinesses([...bormeBusinesses, ...mapsBusinesses]);
 
   const businesses = (
     query.requireWebsite ? merged.filter((business) => Boolean(business.website)) : merged
   ).slice(0, limit);
 
-  const interpretation = `${businesses.length} constituciones sanitarias recientes en el BORME.`;
+  const parts = [`${bormeBusinesses.length} constituciones en el BORME`];
+  if (query.includeMaps) {
+    parts.push(`${mapsBusinesses.length} negocios en Google Maps`);
+  }
+  const interpretation = `${businesses.length} negocios (${parts.join(", ")}).`;
 
   return {
     businesses,
     interpretation,
     warnings,
-    provider: "borme",
+    provider: query.includeMaps ? "borme+maps" : "borme",
   };
 }

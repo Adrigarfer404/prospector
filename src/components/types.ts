@@ -297,6 +297,8 @@ export type AnalyticsDTO = {
 export type FinderResult = {
   interpretation: string;
   warnings: string[];
+  /** Fuentes que han aportado resultados. */
+  sources: string[];
   found: number;
   companies: number;
   leads: number;

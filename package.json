@@ -19,6 +19,7 @@
     "test:e2e": "tsx scripts/test-e2e.ts",
     "cleanup": "tsx scripts/cleanup-leads.ts",
     "rescore": "tsx scripts/rescore-leads.ts",
+    "sweep": "tsx scripts/sweep-maps.ts",
     "check:mail": "tsx scripts/check-mail-dns.ts",
     "setup": "prisma db push && tsx scripts/seed.ts",
     "test:sources": "tsx scripts/test-sources.ts",

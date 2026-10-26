@@ -38,6 +38,10 @@ export type ScoreContext = {
   hasLinkedIn: boolean;
   usesExternalBooking: boolean;
   noWebsite: boolean;
+  /** Nº de reseñas en Google Maps (null si el negocio no viene de Maps). */
+  mapsReviews: number | null;
+  /** Valoración media en Google Maps (null si no viene de Maps). */
+  mapsRating: number | null;
   signals: string[];
 };
 
@@ -182,6 +186,10 @@ function hasData(field: string, ctx: ScoreContext): boolean {
       return ctx.employees !== null && ctx.employees !== undefined;
     case "signals":
       return ctx.signals.length > 0;
+    case "mapsReviews":
+      return ctx.mapsReviews !== null && ctx.mapsReviews !== undefined;
+    case "mapsRating":
+      return ctx.mapsRating !== null && ctx.mapsRating !== undefined;
     default:
       return true;
   }
@@ -244,6 +252,10 @@ export function evaluateCriterion(criterion: IcpCriterion, ctx: ScoreContext): b
         return ctx.noWebsite;
       case "signals":
         return ctx.signals.join(" ");
+      case "mapsReviews":
+        return ctx.mapsReviews;
+      case "mapsRating":
+        return ctx.mapsRating;
       default:
         return undefined;
     }
@@ -493,6 +505,26 @@ export function defaultAgendaosCriteria(): IcpCriterion[] {
       label: "Zona objetivo Madrid",
     },
 
+    // --- Demanda demostrable (sólo si el negocio viene de Google Maps) ---
+    // Un criterio sin datos no puntúa ni penaliza, así que esto no altera la
+    // puntuación de los leads que no proceden de Maps.
+    {
+      field: "mapsReviews",
+      op: "gte",
+      value: 20,
+      weight: 6,
+      penalty: 0,
+      label: "Tiene demanda real (20+ reseñas en Google)",
+    },
+    {
+      field: "mapsRating",
+      op: "gte",
+      value: 4,
+      weight: 3,
+      penalty: 0,
+      label: "Bien valorado por sus pacientes (4+ estrellas)",
+    },
+
     // --- Exclusiones: si se cumplen, el lead no es para nosotros ---
     {
       field: "isPlatform",
@@ -584,6 +616,16 @@ export function buildScoreContext(input: {
   const companyDomain = (input.company?.website ?? "").toLowerCase();
   const isPlatform = platformHosts.some((host) => companyDomain.includes(host));
 
+  // Datos de Google Maps (si el negocio viene de esa fuente).
+  const mapsData =
+    enrichment.maps && typeof enrichment.maps === "object"
+      ? (enrichment.maps as Record<string, unknown>)
+      : null;
+  const mapsReviews = mapsData
+    ? Number(mapsData.reviewCount ?? 0) || 0
+    : null;
+  const mapsRating = mapsData ? Number(mapsData.rating ?? 0) || 0 : null;
+
   const clinicalPattern = new RegExp(CLINICAL_WORDS.join("|"), "i");
   const sectorMatch =
     clinicalPattern.test(input.title ?? "") ||
@@ -612,6 +654,8 @@ export function buildScoreContext(input: {
     hasLinkedIn: Boolean(input.linkedinUrl),
     usesExternalBooking,
     noWebsite: !website,
+    mapsReviews,
+    mapsRating,
     signals,
   };
 }
