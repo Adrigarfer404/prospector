@@ -2,9 +2,11 @@ import { prisma } from "./db";
 import { logActivity } from "./workspace";
 import { buildScoreContext, defaultAgendaosCriteria, detectProfile, scoreLead } from "./scoring";
 import { parseJson, stringifyJson, type IcpCriterion } from "./types";
+import { companyDedupeKey, mergeEnrichment } from "./dedupe";
+import { normalizeNameKey, stripAccents } from "./text";
 import { criteriaFromPlaybook } from "./messages";
-import { searchBusinesses } from "./providers/discovery";
-import { enrichBusiness, findEmails, normalizePhone, personFromBusinessName, stripAccents, verifyEmails } from "./providers/enrichment";
+import { dedupeBusinesses, searchBusinesses } from "./providers/discovery";
+import { enrichBusiness, findEmails, normalizePhone, personFromBusinessName, verifyEmails } from "./providers/enrichment";
 import { findProspectsViaWeb, resolveBusinessContact } from "./providers/finder";
 import type { DiscoveredBusiness } from "./providers/contract";
 
@@ -26,11 +28,17 @@ export type DiscoverOptions = {
   resolveLimit?: number;
   /** Permite desactivar ese paso (resolveWithoutWebsite: false). */
   resolveWithoutWebsite?: boolean;
+  /** Incluir Google Maps en el descubrimiento (opt-in, requiere API key). */
+  includeMaps?: boolean;
+  /** Mínimo de reseñas para aceptar un negocio de Maps (0 = sin filtro). */
+  minMapsReviews?: number;
 };
 
 export type DiscoverOutcome = {
   interpretation: string;
   warnings: string[];
+  /** Fuentes que han aportado resultados: "búsqueda web", "BORME", "Google Maps". */
+  sources: string[];
   found: number;
   companies: number;
   leads: number;
@@ -120,15 +128,6 @@ export function isGenericEmail(email: string | null | undefined): boolean {
 }
 
 /** Normaliza un nombre propio para comparar (sin acentos ni sufijos societarios). */
-function normalizeNameKey(value: string | null | undefined): string {
-  if (!value) return "";
-  return stripAccents(value)
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\b(sl|slu|sa|sau|sc|cb|s l|s a|sociedad limitada|sociedad anonima)\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 /** Cuánto encaja un contacto con el ICP (el que más puntúa es el primero). */
 function contactRelevance(contact: { name: string; role: string | null }): number {
   let score = 0;
@@ -173,14 +172,128 @@ export function pickContacts(
     .slice(0, MAX_LEADS_PER_BUSINESS);
 }
 
+/**
+ * Acepta el enriquecimiento como objeto o como JSON serializado.
+ *
+ * `parseJson` sólo entiende strings: si le pasás un objeto devolvía `{}` y el
+ * enriquecimiento de la empresa (equipo, contacto, descripción) se perdía
+ * entero al guardar.
+ */
+function asEnrichmentRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") return parseJson<Record<string, unknown>>(value, {});
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+/** Normaliza un topónimo para comparar: "A Coruña" == "a coruña". */
+function normalizePlace(value: string | null | undefined): string {
+  return stripAccents(value ?? "").replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
+}
+
+type CompanyProbe = {
+  dedupeKey: string | null;
+  domain: string | null;
+  website: string | null;
+  name: string;
+  nameKey: string;
+  city: string | null;
+  region: string | null;
+  phoneNumber: string | null;
+};
+
+/**
+ * Localiza el negocio ya guardado al que pertenece este hallazgo.
+ *
+ * Se prueban, en orden de fiabilidad: clave idempotente, dominio, web, nombre
+ * exacto y por último nombre normalizado. El último solo vale si comparten
+ * ubicación o teléfono, porque "Clínica Fisio" es un nombre genérico que se
+ * repite en cada ciudad.
+ */
+async function findCompanyCandidate(workspaceId: string, probe: CompanyProbe) {
+  const candidates = await prisma.company.findMany({
+    where: {
+      workspaceId,
+      OR: [
+        ...(probe.dedupeKey ? [{ dedupeKey: probe.dedupeKey }] : []),
+        ...(probe.domain ? [{ domain: probe.domain }] : []),
+        ...(probe.website ? [{ website: probe.website }] : []),
+        { name: probe.name },
+        ...(probe.nameKey ? [{ nameKey: probe.nameKey }] : []),
+      ],
+    },
+  });
+  if (candidates.length === 0) return null;
+
+  const byDedupe = candidates.find((c) => c.dedupeKey && c.dedupeKey === probe.dedupeKey);
+  if (byDedupe) return byDedupe;
+
+  const byDomain = candidates.find((c) => probe.domain && c.domain === probe.domain);
+  if (byDomain) return byDomain;
+
+  const byWebsite = candidates.find((c) => probe.website && c.website === probe.website);
+  if (byWebsite) return byWebsite;
+
+  const byExactName = candidates.find((c) => c.name === probe.name);
+  if (byExactName) return byExactName;
+
+  const city = normalizePlace(probe.city);
+  const region = normalizePlace(probe.region);
+  const compatible = candidates.filter((c) => {
+    if (c.nameKey !== probe.nameKey) return false;
+    if (city && normalizePlace(c.city) === city) return true;
+    if (region && normalizePlace(c.region) === region) return true;
+    if (probe.phoneNumber && c.phoneNumber === probe.phoneNumber) return true;
+    // El candidato no tiene ubicación: no hay evidencia en contra.
+    return !c.city && !c.region;
+  });
+  return compatible[0] ?? null;
+}
+
+/** ¿Es este error una violación de la restricción unique? */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "P2002"
+  );
+}
+
+/**
+ * Prioridad para gastar el presupuesto de resolución de contactos.
+ *
+ * Las reseñas de Google Maps son la mejor señal de demanda que tenemos; un
+ * negocio con 80 reseñas y sin web es un lead mucho más caliente que uno que
+ * sólo aparece en el BORME.
+ */
+function resolvePriority(business: DiscoveredBusiness): number {
+  const reviews = Number(business.raw?.reviewCount ?? 0) || 0;
+  let score = Math.min(reviews, 100) / 10;
+  if (business.phoneNumber) score += 3;
+  return score;
+}
+
 export async function upsertCompany(
   workspaceId: string,
   business: DiscoveredBusiness,
   extra?: Record<string, unknown>,
 ) {
   const domain = business.domain ?? normalizeDomain(business.website);
+  const nameKey = normalizeNameKey(business.name);
+  const dedupeKey = companyDedupeKey({
+    source: business.source,
+    sourceRef: business.sourceRef,
+    domain,
+    website: business.website,
+    name: business.name,
+  });
   const data = {
     name: business.name,
+    nameKey,
+    dedupeKey,
     domain,
     website: business.website,
     industry: (extra?.industry as string | undefined) ?? business.category ?? null,
@@ -194,32 +307,30 @@ export async function upsertCompany(
     source: business.source,
     sourceRef: business.sourceRef,
     tags: stringifyJson((extra?.tags as string[] | undefined) ?? [business.category].filter(Boolean) as string[]),
-    enrichment: stringifyJson({ ...parseJson<Record<string, unknown>>((extra?.enrichment as string) ?? "{}", {}), ...(extra?.signals ? { signals: extra.signals } : {}) }),
+    enrichment: stringifyJson({
+      ...asEnrichmentRecord(extra?.enrichment),
+      ...(extra?.signals ? { signals: extra.signals } : {}),
+    }),
   };
 
-  const existing = await prisma.company.findFirst({
-    where: {
-      workspaceId,
-      OR: [
-        ...(domain ? [{ domain }] : []),
-        ...(business.website ? [{ website: business.website }] : []),
-        { name: business.name },
-      ],
-    },
+  const existing = await findCompanyCandidate(workspaceId, {
+    dedupeKey,
+    domain,
+    website: business.website,
+    name: business.name,
+    nameKey,
+    city: business.city,
+    region: business.region,
+    phoneNumber: data.phoneNumber,
   });
 
   if (existing) {
-    // El enriquecimiento se MERGEA: si esta ejecución no ha enriquecido el
-    // negocio (o no ha crawling), no se pierde el equipo ni las señales que
-    // se detectaron en una ejecución anterior.
+    // El enriquecimiento se MERGEA en dos niveles: si esta ejecución no ha
+    // enriquecido el negocio (o no ha hecho crawling), no se pierde el equipo
+    // ni las señales de una ejecución anterior.
     const previous = parseJson<Record<string, unknown>>(existing.enrichment, {});
     const fresh = parseJson<Record<string, unknown>>(data.enrichment, {});
-    const previousSignals = Array.isArray(previous.signals)
-      ? (previous.signals as string[])
-      : [];
-    const freshSignals = Array.isArray(fresh.signals) ? (fresh.signals as string[]) : [];
-    const merged: Record<string, unknown> = { ...previous, ...fresh };
-    merged.signals = [...new Set([...previousSignals, ...freshSignals])];
+    const merged = mergeEnrichment(previous, fresh);
 
     return prisma.company.update({
       where: { id: existing.id },
@@ -230,11 +341,34 @@ export async function upsertCompany(
         region: data.region ?? existing.region,
         description: data.description ?? existing.description,
         enrichment: stringifyJson(merged),
+        lastSeenAt: new Date(),
+        // Las claves se rellenan si la fila venida de antes no las tenía.
+        ...(existing.dedupeKey ? {} : { dedupeKey: data.dedupeKey }),
+        ...(existing.nameKey ? {} : { nameKey: data.nameKey }),
       },
     });
   }
 
-  return prisma.company.create({ data: { workspaceId, ...data } });
+  try {
+    return await prisma.company.create({
+      data: { workspaceId, ...data, lastSeenAt: new Date() },
+    });
+  } catch (error) {
+    // Carrera entre dos pasadas: otra insertó la misma clave entre el find y
+    // el create. Se recupera actualizando la fila existente.
+    if (isUniqueViolation(error) && dedupeKey) {
+      const raced = await prisma.company.findFirst({
+        where: { workspaceId, dedupeKey },
+      });
+      if (raced) {
+        return prisma.company.update({
+          where: { id: raced.id },
+          data: { lastSeenAt: new Date() },
+        });
+      }
+    }
+    throw error;
+  }
 }
 
 export async function upsertLead(
@@ -257,13 +391,18 @@ export async function upsertLead(
 ) {
   const { firstName, lastName } = splitName(input.fullName);
   const email = input.email?.trim().toLowerCase() || null;
+  const nameKey = normalizeNameKey(input.fullName);
 
   // Búsqueda determinista: primero la misma persona en la misma empresa,
   // después el mismo email y por último la referencia de origen.
   const existing =
     (input.companyId && input.fullName
       ? await prisma.lead.findFirst({
-          where: { workspaceId, companyId: input.companyId, fullName: input.fullName },
+          where: {
+            workspaceId,
+            companyId: input.companyId,
+            OR: [{ fullName: input.fullName }, ...(nameKey ? [{ nameKey }] : [])],
+          },
         })
       : null) ??
     (email
@@ -276,6 +415,7 @@ export async function upsertLead(
   const payload = {
     companyId: input.companyId ?? null,
     fullName: input.fullName ?? null,
+    nameKey,
     firstName,
     lastName,
     jobTitle: input.jobTitle ?? null,
@@ -298,6 +438,11 @@ export async function upsertLead(
           where: { workspaceId, email, NOT: { id: existing.id } },
         })
       : null;
+    // El enriquecimiento también se mergea: una pasada nueva no borra lo que
+    // ya se sabía del lead (emails hallados, señales, etc.).
+    const previous = parseJson<Record<string, unknown>>(existing.enrichment, {});
+    const fresh = parseJson<Record<string, unknown>>(payload.enrichment, {});
+    const merged = mergeEnrichment(previous, fresh);
     return prisma.lead.update({
       where: { id: existing.id },
       data: {
@@ -305,13 +450,17 @@ export async function upsertLead(
         phoneNumber: payload.phoneNumber ?? existing.phoneNumber,
         linkedinUrl: payload.linkedinUrl ?? existing.linkedinUrl,
         email: emailOwner ? existing.email : (payload.email ?? existing.email),
-        enrichment: payload.enrichment,
+        enrichment: stringifyJson(merged),
         status: existing.status === "new" ? "researched" : existing.status,
+        lastSeenAt: new Date(),
+        ...(existing.nameKey ? {} : { nameKey: payload.nameKey }),
       },
     });
   }
 
-  return prisma.lead.create({ data: { workspaceId, ...payload } });
+  return prisma.lead.create({
+    data: { workspaceId, ...payload, lastSeenAt: new Date() },
+  });
 }
 
 /**
@@ -408,32 +557,44 @@ export async function discoverProspects(opts: DiscoverOptions): Promise<Discover
 
   // Fuente 2: BORME (complementaria). Aporta constituciones recientes de
   // empresas sanitarias que todavía no tienen web.
+  // Fuente 3: Google Maps (opt-in). Aporta el censo de la cola larga.
   try {
-    const borme = await searchBusinesses({
+    const discovery = await searchBusinesses({
       query: opts.query,
       location: opts.location,
       limit: Math.min(opts.limit ?? 40, 30),
       country: "ES",
+      includeMaps: opts.includeMaps,
+      minMapsReviews: opts.minMapsReviews,
     });
-    warnings.push(...borme.warnings);
-    if (borme.businesses.length) sources.push("BORME");
-    const known = new Set(businesses.map((b) => `${b.name}|${b.domain ?? ""}`));
-    const extra: DiscoveredBusiness[] = [];
-    for (const business of borme.businesses) {
-      const key = `${business.name}|${business.domain ?? ""}`;
-      if (known.has(key)) continue;
-      known.add(key);
-      extra.push(business);
+    warnings.push(...discovery.warnings);
+    if (discovery.businesses.length) sources.push(discovery.provider);
+
+    // Un negocio puede venir de varias fuentes: se agrupan para repartirlas.
+    const bySource = new Map<string, DiscoveredBusiness[]>();
+    for (const business of discovery.businesses) {
+      const list = bySource.get(business.source) ?? [];
+      list.push(business);
+      bySource.set(business.source, list);
     }
+
     // Reparto equilibrado: si no, el corte final por `limit` se lo lleva todo
     // la búsqueda web y las constituciones del BORME nunca entran en la lista.
     businesses = interleaveBySource([
       { businesses, source: "web" },
-      { businesses: extra.filter((b) => b.source === "borme"), source: "borme" },
+      ...[...bySource.entries()].map(([source, list]) => ({
+        businesses: list,
+        source,
+      })),
     ]);
-    if (!interpretation) interpretation = borme.interpretation;
+    // Dedupe final entre fuentes: el mismo negocio puede haber salido de la
+    // búsqueda web y de Maps con grafías distintas.
+    businesses = dedupeBusinesses(businesses);
+    if (!interpretation) interpretation = discovery.interpretation;
   } catch (err) {
-    warnings.push(`El BORME falló: ${err instanceof Error ? err.message : String(err)}`);
+    warnings.push(
+      `El descubrimiento por registro falló: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   businesses = businesses.slice(0, opts.limit ?? 40);
@@ -444,7 +605,12 @@ export async function discoverProspects(opts: DiscoverOptions): Promise<Discover
   if (opts.resolveWithoutWebsite !== false) {
     const withoutWebsite = businesses.filter((b) => !b.website);
     const budget = opts.resolveLimit ?? 6;
-    const queue = withoutWebsite.slice(0, budget);
+    // Prioridad: primero los negocios con más demanda (reseñas de Maps) y con
+    // teléfono; al final, los que sólo tienen nombre. Así el presupuesto de
+    // resolución se gasta donde hay más probabilidad de cerrar.
+    const queue = [...withoutWebsite]
+      .sort((a, b) => resolvePriority(b) - resolvePriority(a))
+      .slice(0, budget);
 
     // En paralelo (concurrencia 3): cada resolución son 1-2 búsquedas web.
     let cursor = 0;
@@ -500,6 +666,7 @@ export async function discoverProspects(opts: DiscoverOptions): Promise<Discover
       sources.length ? ` Fuentes: ${sources.join(" + ")}.` : ""
     }`,
     warnings,
+    sources,
     provider: sources.join("+") || "ninguna",
   };
 
@@ -610,6 +777,9 @@ export async function discoverProspects(opts: DiscoverOptions): Promise<Discover
         contactName: business.raw?.contactName ?? null,
         jobTitle: business.raw?.jobTitle ?? null,
         address: business.address ?? null,
+        // Los datos de la fuente se guardan bajo su propio namespace para que
+        // no se mezclen con los del crawl (y para poder refrescarlos solos).
+        ...(business.source === "maps" ? { maps: business.raw } : {}),
       },
     });
     companies += 1;
@@ -744,6 +914,7 @@ export async function discoverProspects(opts: DiscoverOptions): Promise<Discover
   return {
     interpretation: result.interpretation,
     warnings,
+    sources: result.sources,
     found: result.businesses.length,
     companies,
     leads: leadIds.length,
