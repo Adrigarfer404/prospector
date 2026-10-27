@@ -19,6 +19,13 @@ export type DiscoveryQuery = {
   country?: string;
   /** Solo negocios con web. */
   requireWebsite?: boolean;
+  /**
+   * Incluir Google Maps (vía Outscraper). Opt-in: sin `OUTSCRAPER_API_KEY` no
+   * se hace ninguna llamada y el resto del flujo sigue igual.
+   */
+  includeMaps?: boolean;
+  /** Mínimo de reseñas para aceptar un negocio de Maps (0 = sin filtro). */
+  minMapsReviews?: number;
 };
 
 export type DiscoveredBusiness = {

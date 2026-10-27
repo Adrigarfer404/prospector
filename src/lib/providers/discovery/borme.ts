@@ -26,6 +26,10 @@ const MAX_PROVINCES = 6;
 const MAX_DAYS_PER_PROVINCE = 3;
 /** Días hábiles hacia atrás que se consultan (cada provincia publica en días propios). */
 const MAX_LOOKBACK_DAYS = 10;
+/** Tope de seguridad en días naturales para no pedir un sumario de hace un año. */
+const MAX_LOOKBACK_CALENDAR_DAYS = 31;
+/** Zona horaria del BOE: el sumario se publica por la mañana peninsular. */
+const MADRID_TZ = "Europe/Madrid";
 
 /**
  * Ciudad → alias del título de provincia en el BORME.
@@ -246,6 +250,76 @@ export function resolveProvince(
   return null;
 }
 
+/**
+ * Rotación de provincias.
+ *
+ * Si la consulta no dice dónde buscar, el BORME no se descarta: se consulta
+ * una provincia distinta cada día. El orden empieza por las de mayor densidad
+ * de negocios (donde está el mercado) y sigue con el resto.
+ *
+ * El índice es determinista por día: la misma provincia un día dado, y
+ * distinta al día siguiente. Así el barrido diario es reproducible.
+ */
+const PROVINCE_ROTATION: { title: string; aliases: string[] }[] = [
+  { title: "MADRID", aliases: ["MADRID"] },
+  { title: "BARCELONA", aliases: ["BARCELONA"] },
+  { title: "VALENCIA", aliases: ["VALENCIA"] },
+  { title: "SEVILLA", aliases: ["SEVILLA"] },
+  { title: "BIZKAIA", aliases: ["BIZKAIA"] },
+  { title: "ZARAGOZA", aliases: ["ZARAGOZA"] },
+  { title: "MALAGA", aliases: ["MALAGA"] },
+  { title: "ALICANTE", aliases: ["ALICANTE"] },
+  { title: "A CORUNA", aliases: ["A CORUNA", "CORUNA"] },
+  { title: "ALAVA", aliases: ["ALAVA", "ARABA"] },
+  { title: "MURCIA", aliases: ["MURCIA"] },
+  { title: "BALEARES", aliases: ["BALEARES", "ILLES BALEARS"] },
+  { title: "GRANADA", aliases: ["GRANADA"] },
+  { title: "VALLADOLID", aliases: ["VALLADOLID"] },
+  { title: "LAS PALMAS", aliases: ["LAS PALMAS"] },
+  { title: "NAVARRA", aliases: ["NAVARRA"] },
+  { title: "CANTABRIA", aliases: ["CANTABRIA"] },
+  { title: "CORDOBA", aliases: ["CORDOBA"] },
+  { title: "PONTEVEDRA", aliases: ["PONTEVEDRA"] },
+  { title: "ASTURIAS", aliases: ["ASTURIAS"] },
+  { title: "TARRAGONA", aliases: ["TARRAGONA"] },
+  { title: "LERIDA", aliases: ["LERIDA"] },
+  { title: "TOLEDO", aliases: ["TOLEDO"] },
+  { title: "CADIZ", aliases: ["CADIZ"] },
+  { title: "HUELVA", aliases: ["HUELVA"] },
+  { title: "BURGOS", aliases: ["BURGOS"] },
+  { title: "ALBACETE", aliases: ["ALBACETE"] },
+  { title: "OURENSE", aliases: ["OURENSE"] },
+  { title: "GIRONA", aliases: ["GIRONA"] },
+  { title: "GIPUZKOA", aliases: ["GIPUZKOA"] },
+  { title: "SANTA CRUZ DE TENERIFE", aliases: ["SANTA CRUZ DE TENERIFE"] },
+  { title: "JAEN", aliases: ["JAEN"] },
+  { title: "LEON", aliases: ["LEON"] },
+  { title: "LUGO", aliases: ["LUGO"] },
+  { title: "PALENCIA", aliases: ["PALENCIA"] },
+  { title: "SALAMANCA", aliases: ["SALAMANCA"] },
+  { title: "TERUEL", aliases: ["TERUEL"] },
+  { title: "SORIA", aliases: ["SORIA"] },
+  { title: "SEGOVIA", aliases: ["SEGOVIA"] },
+  { title: "AVILA", aliases: ["AVILA"] },
+  { title: "CUENCA", aliases: ["CUENCA"] },
+  { title: "CASTELLON", aliases: ["CASTELLON"] },
+  { title: "GUADALAJARA", aliases: ["GUADALAJARA"] },
+  { title: "HUESCA", aliases: ["HUESCA"] },
+  { title: "CIUDAD REAL", aliases: ["CIUDAD REAL"] },
+  { title: "BADAJOZ", aliases: ["BADAJOZ"] },
+  { title: "CACERES", aliases: ["CACERES"] },
+  { title: "MELILLA", aliases: ["MELILLA"] },
+  { title: "CEUTA", aliases: ["CEUTA"] },
+];
+
+/** Provincia de la rotación que corresponde a hoy (determinista por día). */
+export function rotatedProvinceForToday(now: Date = new Date()): BormeProvince {
+  const today = madridTodayParts(now);
+  const dayNumber = Math.floor(Date.UTC(today.y, today.m - 1, today.d) / 86_400_000);
+  const entry = PROVINCE_ROTATION[dayNumber % PROVINCE_ROTATION.length];
+  return { title: entry.title, aliases: entry.aliases };
+}
+
 function toDateKey(date: Date): string {
   const y = date.getUTCFullYear();
   const m = String(date.getUTCMonth() + 1).padStart(2, "0");
@@ -264,21 +338,42 @@ function parseExplicitDate(queryText: string): string | null {
   return null;
 }
 
-/** Días hábiles hacia atrás desde hoy (saltando fines de semana). */
+/** Fecha de hoy en hora peninsular, descompuesta en año/mes/día. */
+function madridTodayParts(now: Date = new Date()): { y: number; m: number; d: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: MADRID_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  const [y, m, d] = parts.split("-").map((value) => Number(value));
+  return { y: y ?? 1970, m: m ?? 1, d: d ?? 1 };
+}
+
+/**
+ * Días hábiles hacia atrás desde hoy (saltando fines de semana).
+ *
+ * El tope son días HÁBILES. Antes el contador también gastaba pasos en sábado
+ * y domingo, así que 10 iteraciones sólo daban 6-8 sumarios reales; ahora se
+ * separa el tope de días hábiles del tope de seguridad en días naturales.
+ *
+ * El punto de partida es "hoy" en hora peninsular: con UTC, entre las 00:00 y
+ * las 02:00 de Madrid la ventana arrancaba un día antes de lo debido.
+ */
 export function resolveSearchDates(queryText: string, maxDays = MAX_LOOKBACK_DAYS): string[] {
   const explicit = parseExplicitDate(queryText);
   if (explicit) return [explicit];
 
   const dates: string[] = [];
-  const cursor = new Date();
-  let lookedBack = 0;
+  const today = madridTodayParts();
+  const cursor = new Date(Date.UTC(today.y, today.m - 1, today.d));
+  let calendarDays = 0;
 
-  while (dates.length < maxDays && lookedBack < MAX_LOOKBACK_DAYS) {
+  while (dates.length < maxDays && calendarDays < MAX_LOOKBACK_CALENDAR_DAYS) {
     const day = cursor.getUTCDay();
-    const isWeekend = day === 0 || day === 6;
-    if (!isWeekend) dates.push(toDateKey(cursor));
+    if (day !== 0 && day !== 6) dates.push(toDateKey(cursor));
     cursor.setUTCDate(cursor.getUTCDate() - 1);
-    lookedBack += 1;
+    calendarDays += 1;
   }
   return dates;
 }
@@ -287,8 +382,29 @@ type SumarioItem = { identificador: string; titulo: string; url_xml: string };
 
 type Sumario = { sections: { code: string; items: SumarioItem[] }[] };
 
-const sumarioCache = new Map<string, Promise<Sumario | null>>();
-const xmlCache = new Map<string, Promise<string | null>>();
+/** Un sumario ya publicado no cambia: se cachea medio día. */
+const SUMARIO_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+/** Un 404 (el sumario de hoy aún no está publicado) se reintenta pronto. */
+const SUMARIO_MISS_TTL_MS = 30 * 60 * 1000;
+/** El XML de una provincia es inmutable una vez publicado. */
+const XML_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const XML_MISS_TTL_MS = 30 * 60 * 1000;
+
+type CacheEntry<T> = { promise: Promise<T>; expiresAt: number };
+
+const sumarioCache = new Map<string, CacheEntry<Sumario | null>>();
+const xmlCache = new Map<string, CacheEntry<string | null>>();
+
+/** Lee una entrada de caché si no ha caducado. */
+function getCached<T>(cache: Map<string, CacheEntry<T>>, key: string): Promise<T> | null {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.promise;
+}
 
 async function fetchWithTimeout(url: string, accept: string): Promise<string | null> {
   const controller = new AbortController();
@@ -309,7 +425,7 @@ async function fetchWithTimeout(url: string, accept: string): Promise<string | n
 
 /** Descarga (y cachea) el sumario JSON de un día. */
 export function fetchSumario(dateKey: string): Promise<Sumario | null> {
-  const cached = sumarioCache.get(dateKey);
+  const cached = getCached(sumarioCache, dateKey);
   if (cached) return cached;
 
   const promise = (async (): Promise<Sumario | null> => {
@@ -332,17 +448,34 @@ export function fetchSumario(dateKey: string): Promise<Sumario | null> {
     }
   })();
 
-  sumarioCache.set(dateKey, promise);
+  const entry: CacheEntry<Sumario | null> = {
+    promise,
+    expiresAt: Date.now() + SUMARIO_CACHE_TTL_MS,
+  };
+  // Un fallo se cachea poco: el sumario de hoy se publica por la mañana y, si
+  // el 404 se guardara para siempre, ese día no aparecería hasta reiniciar el
+  // proceso.
+  promise.then((value) => {
+    entry.expiresAt = Date.now() + (value ? SUMARIO_CACHE_TTL_MS : SUMARIO_MISS_TTL_MS);
+  });
+  sumarioCache.set(dateKey, entry);
   return promise;
 }
 
 /** Descarga (y cachea) el XML de una provincia. */
 export function fetchProvinceXml(identificador: string): Promise<string | null> {
-  const cached = xmlCache.get(identificador);
+  const cached = getCached(xmlCache, identificador);
   if (cached) return cached;
 
   const promise = fetchWithTimeout(`${PROVINCE_XML_URL}${identificador}`, "application/xml");
-  xmlCache.set(identificador, promise);
+  const entry: CacheEntry<string | null> = {
+    promise,
+    expiresAt: Date.now() + XML_CACHE_TTL_MS,
+  };
+  promise.then((value) => {
+    entry.expiresAt = Date.now() + (value ? XML_CACHE_TTL_MS : XML_MISS_TTL_MS);
+  });
+  xmlCache.set(identificador, entry);
   return promise;
 }
 
@@ -520,8 +653,10 @@ function provinceMatches(itemTitle: string, province: BormeProvince): boolean {
  * Devuelve `null` si no hay provincia reconocible en la query.
  */
 export async function searchBorme(query: DiscoveryQuery): Promise<DiscoveryResult | null> {
-  const province = resolveProvince(query.query, query.location);
-  if (!province) return null;
+  const explicitProvince = resolveProvince(query.query, query.location);
+  // Sin provincia en la consulta no se descarta el BORME: se usa la rotación
+  // diaria, que va cambiando de provincia cada día.
+  const province = explicitProvince ?? rotatedProvinceForToday();
 
   const dates = resolveSearchDates(query.query);
   const limit = query.limit ?? 50;
@@ -529,6 +664,12 @@ export async function searchBorme(query: DiscoveryQuery): Promise<DiscoveryResul
   const warnings: string[] = [];
   let provincesDownloaded = 0;
   let daysWithData = 0;
+
+  if (!explicitProvince) {
+    warnings.push(
+      `BORME: la consulta no indica provincia, así que se ha usado la rotación diaria (${province.title}).`,
+    );
+  }
 
   // Cada provincia publica en días propios: se recorren hasta 10 días hábiles
   // y se accumulates como máximo 3 de ellos por provincia.

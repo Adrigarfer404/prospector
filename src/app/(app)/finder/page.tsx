@@ -41,6 +41,9 @@ export default function FinderPage() {
   const [location, setLocation] = useState("");
   const [listName, setListName] = useState("");
   const [resolve, setResolve] = useState(true);
+  // Google Maps es opt-in: sin la API key de Outscraper no se puede usar.
+  const [includeMaps, setIncludeMaps] = useState(false);
+  const [mapsConfigured, setMapsConfigured] = useState(false);
 
   const [searching, setSearching] = useState(false);
   const [phase, setPhase] = useState(0);
@@ -61,6 +64,21 @@ export default function FinderPage() {
     return () => clearInterval(timer);
   }, [searching]);
 
+  // ¿Está Google Maps disponible en este servidor?
+  useEffect(() => {
+    let cancelled = false;
+    void apiGet<{ mapsConfigured: boolean }>("/api/finder")
+      .then((data) => {
+        if (!cancelled) setMapsConfigured(Boolean(data.mapsConfigured));
+      })
+      .catch(() => {
+        /* si no se puede consultar, se deja el checkbox deshabilitado */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const canSearch = query.trim().length >= 3 && !searching;
 
   const runSearch = async () => {
@@ -78,6 +96,7 @@ export default function FinderPage() {
         query: query.trim(),
         ...(location.trim() ? { location: location.trim() } : {}),
         resolve,
+        includeMaps,
       });
       setResult(response);
 
@@ -172,6 +191,13 @@ export default function FinderPage() {
             ))}
           </div>
 
+          {includeMaps && !mapsConfigured ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Google Maps está marcado pero el servidor no tiene OUTSCRAPER_API_KEY: se buscará sólo
+              en la web y en el BORME.
+            </p>
+          ) : null}
+
           <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <Field label="Ubicación" hint="Ciudad o barrio. Si lo dejas vacío se usa la del texto.">
               <Input
@@ -181,7 +207,7 @@ export default function FinderPage() {
                 disabled={searching}
               />
             </Field>
-            <div className="flex items-end gap-4">
+            <div className="flex flex-wrap items-end gap-4">
               <label className="flex items-center gap-2 pb-2.5 text-sm text-slate-600">
                 <input
                   type="checkbox"
@@ -191,6 +217,25 @@ export default function FinderPage() {
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
                 Buscar también los negocios sin web
+              </label>
+              <label
+                className={`flex items-center gap-2 pb-2.5 text-sm ${
+                  mapsConfigured ? "text-slate-600" : "text-slate-400"
+                }`}
+                title={
+                  mapsConfigured
+                    ? "Añade el censo de Google Maps: negocios con reseñas y teléfono, no sólo los mejor posicionados en la web."
+                    : "Requiere OUTSCRAPER_API_KEY en el .env del servidor."
+                }
+              >
+                <input
+                  type="checkbox"
+                  checked={includeMaps}
+                  onChange={(event) => setIncludeMaps(event.target.checked)}
+                  disabled={searching || !mapsConfigured}
+                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                Incluir Google Maps
               </label>
               <Button type="submit" variant="primary" disabled={!canSearch} className="h-[42px]">
                 {searching ? <Spinner /> : <Icon name="search" className="h-4 w-4" />}
@@ -387,6 +432,17 @@ export default function FinderPage() {
                   extraen emails y teléfonos de contacto publicados por la propia empresa.
                 </span>
               </li>
+              {(result.sources ?? []).some((source) => source.toLowerCase().includes("maps")) ? (
+                <li className="flex gap-2">
+                  <Icon name="target" className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
+                  <span>
+                    Parte de los negocios viene de <strong>Google Maps</strong>: aporta los que no
+                    salen bien posicionados en la web, su <strong>teléfono</strong> y su{" "}
+                    <strong>número de reseñas</strong>, que es la señal de demanda que se usa para
+                    priorizar.
+                  </span>
+                </li>
+              ) : null}
               <li className="flex gap-2">
                 <Icon name="chart" className="mt-0.5 h-4 w-4 shrink-0 text-indigo-500" />
                 <span>
@@ -412,9 +468,14 @@ export default function FinderPage() {
 
       {result && result.leads > 0 ? (
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-          <Badge tone="indigo">Fuente: web + BORME</Badge>
+          <Badge tone="indigo">
+            Fuente: {(result.sources ?? ["web"]).join(" + ") || "web"}
+          </Badge>
           <Badge tone="slate">Web pública del negocio</Badge>
           <Badge tone="slate">Puntuación con tu ICP</Badge>
+          {(result.sources ?? []).some((source) => source.toLowerCase().includes("maps")) ? (
+            <Badge tone="slate">Datos de lugar y reputación: Google Maps</Badge>
+          ) : null}
         </div>
       ) : null}
     </div>

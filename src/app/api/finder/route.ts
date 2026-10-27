@@ -15,9 +15,26 @@ const BodySchema = z.object({
   resolveLimit: z.number().min(0).max(20).optional(),
   /** false = no buscar el contacto de los negocios que aún no tienen web. */
   resolve: z.boolean().optional(),
+  /**
+   * Incluir Google Maps en el descubrimiento. Opt-in: hace falta la API key
+   * de Outscraper en el servidor.
+   */
+  includeMaps: z.boolean().optional(),
   listId: z.string().optional().nullable(),
   listName: z.string().optional().nullable(),
 });
+
+/**
+ * Estado de las fuentes opcionales, para que la UI sepa si puede ofrecerlas.
+ */
+export async function GET() {
+  try {
+    const { outscraperConfigured } = await import("@/lib/providers/discovery/outscraper");
+    return ok({ mapsConfigured: outscraperConfigured() });
+  } catch (err) {
+    return serverError(err);
+  }
+}
 
 /**
  * AI Finder: descubre prospectos reales a partir de una descripción en
@@ -63,6 +80,7 @@ export async function POST(request: Request) {
       enrichLimit: input.enrichLimit ?? Math.min(input.limit ?? 20, 18),
       resolveLimit: input.resolveLimit ?? 6,
       resolveWithoutWebsite: input.resolve ?? true,
+      includeMaps: input.includeMaps ?? false,
       listId,
     });
 

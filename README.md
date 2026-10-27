@@ -101,6 +101,7 @@ Dos avisos:
 | **Hunter.io** | Emails con score. | `HUNTER_API_KEY` (opcional). |
 | **Crawler de la web del negocio** | Emails, teléfonos, equipo con nombre y apellidos, señales de agenda externa. | Nada. |
 | **Verificación SMTP** | Confirma si el buzón existe (sin enviar nada). | Nada. |
+| **Google Maps (opt-in)** | El censo: negocios que la búsqueda web no alcanza (la cola larga), su teléfono, su web y su **número de reseñas**, que es la señal de demanda que se usa para priorizar. | `OUTSCRAPER_API_KEY` (opcional). |
 
 ### Por qué el BORME sólo no sirve (y sí combinado
 
@@ -137,6 +138,63 @@ Si la base ya tiene ruido de ejecuciones anteriores:
 npm run cleanup          # funde duplicados, renombra y borra lo inservible
 npm run cleanup -- --dry # sólo informa, no toca nada
 ```
+
+---
+
+## Google Maps (opt-in)
+
+La búsqueda web devuelve el *top* de resultados: negocios que ya están bien
+posicionados en SEO, que suelen ser los que **ya tienen web y agenda**. Para
+conseguir el resto hace falta un censo, y eso es lo que aporta Maps.
+
+**Qué aporta y qué no:**
+
+| Aporta | No aporta |
+|---|---|
+| Nombre, dirección, **teléfono**, web, categoría | **Ningún email**: Maps no tiene emails |
+| **Rating y número de reseñas** (señal de demanda) | Coordenadas y reseñas textuales (no se guardan) |
+| Enumeración real: llega a la cola larga | Nada de datos personales: sólo datos del negocio |
+
+El email sale de la **web de la propia clínica**: es el crawler que ya existía.
+Por eso una clínica sin web sigue sin email — Maps da su teléfono.
+
+**Cómo se activa (es opcional y no rompe nada):**
+
+```bash
+# 1) Copia el .env.example y pon tu clave de Outscraper
+cp .env.example .env
+# edita .env: OUTSCRAPER_API_KEY=...
+
+# 2) En el Finder, marca "Incluir Google Maps"
+```
+
+Sin `OUTSCRAPER_API_KEY` el checkbox aparece deshabilitado y el flujo es
+exactamente el de antes: búsqueda web + BORME.
+
+**Barrido diario (construye el censo):**
+
+```bash
+npm run sweep -- --cells 5          # 5 celdas (categoría × provincia)
+npm run sweep -- --enrich            # además: crawl de web + email + alta de leads
+npm run sweep -- --category dentist --province valencia
+npm run sweep -- --dry               # simulación, no escribe nada
+npm run sweep -- --reset             # vuelve el cursor al principio
+```
+
+El barrido recorre una matriz de **10 categorías × 51 provincias** con un cursor
+persistido (`SweepState`), así cada pasada cubre celdas nuevas y ninguna se
+repite. Las provincias **no** están en orden alfabético: empiezan por las de
+mayor densidad de mercado (Madrid, Barcelona, Valencia…) y siguen con el resto.
+
+Cada pasada deja traza en la tabla `Job` y avanza el cursor, de modo que se
+puede encadenar con un `cron` local sin más configuración.
+
+**Sobre los datos:** Google Maps no da emails y este flujo sólo guarda datos de
+negocio (nombre comercial, dirección, teléfono publicado, web, reseñas). Los
+emails se obtienen de la web pública de la propia empresa. La API oficial de
+Google Places tiene además sus propias condiciones (no permite persistir el
+contenido más de 30 días y exige atribución visible); por eso aquí se usa un
+proveedor intermedio y se documenta el criterio de datos.
 
 ---
 
@@ -333,15 +391,22 @@ src/lib/
     anthropic.ts             API de Messages (Anthropic y proxy MiniMax)
     openai.ts                API de Chat Completions (OpenRouter y compatibles)
     types.ts                 Proveedores, modelos y ajustes
+  dedupe.ts                  Claves idempotentes + merge de enriquecimiento
+  text.ts                    Normalización de texto (acentos, sufijos societarios)
   providers/
     contract.ts              Interfaces de los providers
     minimax.ts               Cliente MiniMax (texto + web_search)
     finder.ts                AI Finder (búsqueda web + extracción)
-    discovery/               BORME
+    discovery/               BORME, Google Maps y barrido
+      borme.ts               BORME/BOE (sumarios + XML por provincia)
+      maps.ts                Google Maps (opt-in)
+      outscraper.ts          Cliente de la API de Outscraper
+      sweep.ts               Matriz categoría × provincia y barrido diario
     enrichment/              Crawler de webs, emails, SMTP, Hunter
 src/app/api/                API REST
 src/app/(app)/               Interfaz
 scripts/seed.ts              Carga datos reales
+scripts/sweep-maps.ts        Barrido diario de Google Maps
 scripts/test-finder.ts       Test del AI Finder
 scripts/test-ai.ts           Test del proveedor de IA activo
 scripts/test-ai-compat.ts   Autotest de compatibilidad con APIs tipo OpenAI
@@ -370,6 +435,16 @@ npm run test:e2e                                # flujo completo contra la API (
 
 npm run cleanup                                 # limpia duplicados y leads inservibles
 npm run cleanup -- --dry                        # sólo informa
+
+npm run sweep -- --cells 5                      # barrido de Maps (5 celdas)
+npm run sweep -- --enrich                       # barrido + crawl + email + leads
+npm run sweep -- --dry                          # simulación
+```
+
+Y el cron local para el barrido diario (a las 7:15, hora peninsular):
+
+```cron
+15 7 * * * cd /ruta/al/proyecto && npm run sweep -- --cells 5 --enrich >> /tmp/sweep.log 2>&1
 ```
 
 `npm run test:e2e` recorre: analítica → playbook → leads con email → alta en
