@@ -16,6 +16,7 @@ import {
   Select,
   Textarea,
 } from "@/components/ui";
+import { ICP_FIELDS, OPS_BY_KIND, getIcpField, type IcpFieldKind } from "@/lib/icp-fields";
 
 const OP_OPTIONS = [
   { value: "equals", label: "es igual a" },
@@ -30,22 +31,15 @@ const OP_OPTIONS = [
   { value: "lte", label: "igual o menor que" },
   { value: "exists", label: "existe" },
   { value: "not_exists", label: "no existe" },
-  { value: "regex", label: "coincide con" },
+  { value: "regex", label: "coincide con (regex)" },
 ];
 
-const FIELD_OPTIONS = [
-  { value: "jobTitle", label: "Cargo" },
-  { value: "city", label: "Ciudad" },
-  { value: "region", label: "Provincia" },
-  { value: "country", label: "País" },
-  { value: "email", label: "Email" },
-  { value: "phoneNumber", label: "Teléfono" },
-  { value: "linkedinUrl", label: "LinkedIn" },
-  { value: "website", label: "Web" },
-  { value: "company.industry", label: "Sector de la empresa" },
-  { value: "company.size", label: "Tamaño de la empresa" },
-  { value: "company.description", label: "Descripción de la empresa" },
+const BOOL_OPTIONS = [
+  { value: "true", label: "Sí (está presente)" },
+  { value: "false", label: "No (no está presente)" },
 ];
+
+const FIELD_OPTIONS = ICP_FIELDS.map((field) => ({ value: field.value, label: field.label }));
 
 type CriterionDraft = {
   key: string;
@@ -53,17 +47,29 @@ type CriterionDraft = {
   op: string;
   value: string;
   weight: string;
+  penalty: string;
   label: string;
 };
 
 const emptyCriterion = (): CriterionDraft => ({
   key: Math.random().toString(36).slice(2, 10),
-  field: "jobTitle",
-  op: "contains",
-  value: "",
+  field: "manualAgenda",
+  op: "equals",
+  value: "true",
   weight: "10",
+  penalty: "3",
   label: "",
 });
+
+/** Normaliza el valor al tipo que espera el campo (bool, número o texto). */
+function typedValue(kind: IcpFieldKind, raw: string): string | number | boolean {
+  if (kind === "bool") return raw === "true";
+  if (kind === "number") {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : raw;
+  }
+  return raw;
+}
 
 export default function PlaybookPage() {
   const [playbook, setPlaybook] = useState<PlaybookDTO | null>(null);
@@ -89,13 +95,17 @@ export default function PlaybookPage() {
       setCriteria(
         (data.icpCriteria ?? []).map((criterion) => ({
           key: Math.random().toString(36).slice(2, 10),
-          field: criterion.field ?? "jobTitle",
-          op: criterion.op ?? "contains",
+          field: criterion.field ?? "manualAgenda",
+          op: criterion.op ?? "equals",
           value:
             criterion.value === undefined || criterion.value === null
               ? ""
               : String(criterion.value),
           weight: String(criterion.weight ?? 10),
+          // La penalización se conserva aunque no se edite: si no, al guardar
+          // se perdería y la puntuación de los leads cambiaría sin que nadie
+          // lo pidiera.
+          penalty: String(criterion.penalty ?? 3),
           label: criterion.label ?? "",
         })),
       );
@@ -120,13 +130,18 @@ export default function PlaybookPage() {
     setSaveError(null);
     setNotice(null);
     try {
-      const icpCriteria: IcpCriterionDTO[] = criteria.map((criterion) => ({
-        field: criterion.field,
-        op: criterion.op,
-        value: criterion.value,
-        weight: Number(criterion.weight) || 0,
-        label: criterion.label || undefined,
-      }));
+      const icpCriteria: IcpCriterionDTO[] = criteria.map((criterion) => {
+        const kind = getIcpField(criterion.field)?.kind ?? "text";
+        const penalty = Number(criterion.penalty);
+        return {
+          field: criterion.field,
+          op: criterion.op,
+          value: typedValue(kind, criterion.value),
+          weight: Number(criterion.weight) || 0,
+          ...(Number.isFinite(penalty) ? { penalty } : {}),
+          label: criterion.label || undefined,
+        };
+      });
       await apiSend("/api/playbook", "PUT", {
         ourCompany: playbook.ourCompany,
         ourOffer: playbook.ourOffer,
@@ -235,98 +250,177 @@ export default function PlaybookPage() {
             </Button>
           </div>
 
+          <p className="mb-3 text-xs text-slate-500">
+            Cada criterio suma su <strong className="font-semibold">peso</strong> si el lead lo cumple
+            y resta su <strong className="font-semibold">penalización</strong> si no. Un peso
+            negativo es una exclusión (sólo resta cuando se cumple). Si no hay datos para decidir,
+            el criterio no puntúa ni penaliza.
+          </p>
+
           {criteria.length === 0 ? (
             <p className="text-sm text-slate-500">
               Sin criterios el score se basará solo en los datos de contacto disponibles.
             </p>
           ) : (
             <div className="space-y-3">
-              {criteria.map((criterion, index) => (
-                <div
-                  key={criterion.key}
-                  className="grid gap-3 rounded-lg border border-slate-200 p-3 sm:grid-cols-2 lg:grid-cols-6"
-                >
-                  <Field label="Campo">
-                    <Select
-                      value={criterion.field}
-                      onChange={(value) =>
-                        setCriteria((current) =>
-                          current.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, field: value } : item,
-                          ),
-                        )
-                      }
-                      options={FIELD_OPTIONS}
-                    />
-                  </Field>
-                  <Field label="Condición">
-                    <Select
-                      value={criterion.op}
-                      onChange={(value) =>
-                        setCriteria((current) =>
-                          current.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, op: value } : item,
-                          ),
-                        )
-                      }
-                      options={OP_OPTIONS}
-                    />
-                  </Field>
-                  <Field label="Valor">
-                    <Input
-                      value={criterion.value}
-                      onChange={(value) =>
-                        setCriteria((current) =>
-                          current.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, value } : item,
-                          ),
-                        )
-                      }
-                      placeholder="fisioterapia"
-                    />
-                  </Field>
-                  <Field label="Peso">
-                    <Input
-                      value={criterion.weight}
-                      onChange={(value) =>
-                        setCriteria((current) =>
-                          current.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, weight: value } : item,
-                          ),
-                        )
-                      }
-                      type="number"
-                      min={0}
-                      max={100}
-                    />
-                  </Field>
-                  <Field label="Etiqueta" hint="Opcional.">
-                    <Input
-                      value={criterion.label}
-                      onChange={(value) =>
-                        setCriteria((current) =>
-                          current.map((item, itemIndex) =>
-                            itemIndex === index ? { ...item, label: value } : item,
-                          ),
-                        )
-                      }
-                      placeholder="Fisio con web"
-                    />
-                  </Field>
-                  <div className="flex items-end">
-                    <Button
-                      variant="ghost"
-                      className="text-red-600"
-                      onClick={() =>
-                        setCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))
+              {criteria.map((criterion, index) => {
+                const field = getIcpField(criterion.field);
+                const kind: IcpFieldKind = field?.kind ?? "text";
+                const opOptions = OP_OPTIONS.filter((option) =>
+                  OPS_BY_KIND[kind].includes(option.value),
+                );
+                return (
+                  <div
+                    key={criterion.key}
+                    className="grid gap-3 rounded-lg border border-slate-200 p-3 sm:grid-cols-2 lg:grid-cols-7"
+                  >
+                    <Field label="Campo" hint={field?.hint}>
+                      <Select
+                        value={criterion.field}
+                        onChange={(value) => {
+                          const nextKind = getIcpField(value)?.kind ?? "text";
+                          const allowed = OPS_BY_KIND[nextKind];
+                          setCriteria((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index
+                                ? {
+                                    ...item,
+                                    field: value,
+                                    op: allowed.includes(item.op) ? item.op : allowed[0],
+                                    value:
+                                      nextKind === "bool"
+                                        ? "true"
+                                        : nextKind === "number"
+                                          ? ""
+                                          : item.value,
+                                  }
+                                : item,
+                            ),
+                          );
+                        }}
+                        options={FIELD_OPTIONS}
+                      />
+                    </Field>
+                    <Field label="Condición">
+                      <Select
+                        value={criterion.op}
+                        onChange={(value) =>
+                          setCriteria((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, op: value } : item,
+                            ),
+                          )
+                        }
+                        options={opOptions}
+                      />
+                    </Field>
+                    <Field
+                      label="Valor"
+                      hint={
+                        kind === "bool"
+                          ? "Señal presente o ausente."
+                          : kind === "number"
+                            ? "Un número."
+                            : criterion.op === "in" || criterion.op === "not_in"
+                              ? "Valores separados por comas."
+                              : criterion.op === "regex"
+                                ? "Expresión regular."
+                                : undefined
                       }
                     >
-                      <Icon name="trash" className="h-4 w-4" />
-                      Quitar
-                    </Button>
+                      {kind === "bool" ? (
+                        <Select
+                          value={criterion.value === "false" ? "false" : "true"}
+                          onChange={(value) =>
+                            setCriteria((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, value } : item,
+                              ),
+                            )
+                          }
+                          options={BOOL_OPTIONS}
+                        />
+                      ) : (
+                        <Input
+                          value={criterion.value}
+                          onChange={(value) =>
+                            setCriteria((current) =>
+                              current.map((item, itemIndex) =>
+                                itemIndex === index ? { ...item, value } : item,
+                              ),
+                            )
+                          }
+                          type={kind === "number" ? "number" : "text"}
+                          placeholder={
+                            kind === "number"
+                              ? "10"
+                              : criterion.op === "in" || criterion.op === "not_in"
+                                ? "uno, dos, tres"
+                                : criterion.op === "regex"
+                                  ? "dueño|director"
+                                  : "fisioterapia"
+                          }
+                        />
+                      )}
+                    </Field>
+                    <Field label="Peso" hint="Puntos si se cumple.">
+                      <Input
+                        value={criterion.weight}
+                        onChange={(value) =>
+                          setCriteria((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, weight: value } : item,
+                            ),
+                          )
+                        }
+                        type="number"
+                        min={-100}
+                        max={100}
+                      />
+                    </Field>
+                    <Field label="Penalización" hint="Puntos si NO se cumple.">
+                      <Input
+                        value={criterion.penalty}
+                        onChange={(value) =>
+                          setCriteria((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, penalty: value } : item,
+                            ),
+                          )
+                        }
+                        type="number"
+                        min={0}
+                        max={100}
+                      />
+                    </Field>
+                    <Field label="Etiqueta" hint="Opcional.">
+                      <Input
+                        value={criterion.label}
+                        onChange={(value) =>
+                          setCriteria((current) =>
+                            current.map((item, itemIndex) =>
+                              itemIndex === index ? { ...item, label: value } : item,
+                            ),
+                          )
+                        }
+                        placeholder="Fisio con web"
+                      />
+                    </Field>
+                    <div className="flex items-end">
+                      <Button
+                        variant="ghost"
+                        className="text-red-600"
+                        onClick={() =>
+                          setCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))
+                        }
+                      >
+                        <Icon name="trash" className="h-4 w-4" />
+                        Quitar
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

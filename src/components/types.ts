@@ -241,6 +241,8 @@ export type IcpCriterionDTO = {
   op: string;
   value?: string | number | boolean | string[];
   weight?: number;
+  /** Puntos si NO se cumple. 0 para criterios de exclusión. */
+  penalty?: number;
   label?: string;
 };
 
