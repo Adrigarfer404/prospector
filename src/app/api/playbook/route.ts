@@ -6,12 +6,35 @@ import { parseJson, type IcpCriterion } from "@/lib/types";
 
 export const runtime = "nodejs";
 
+const IcpCriterionSchema = z.object({
+  field: z.string().min(1),
+  op: z.enum([
+    "equals",
+    "not_equals",
+    "contains",
+    "not_contains",
+    "in",
+    "not_in",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "exists",
+    "not_exists",
+    "regex",
+  ]),
+  value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]).optional(),
+  weight: z.number().optional(),
+  penalty: z.number().optional(),
+  label: z.string().optional(),
+});
+
 const PutSchema = z.object({
   ourCompany: z.string().optional(),
   ourOffer: z.string().nullable().optional(),
   ourValue: z.string().nullable().optional(),
   icpSummary: z.string().nullable().optional(),
-  icpCriteria: z.array(z.record(z.string(), z.unknown())).optional(),
+  icpCriteria: z.array(IcpCriterionSchema).optional(),
   disqualified: z.array(z.string()).optional(),
   proofPoints: z.array(z.string()).optional(),
   tone: z.string().optional(),
@@ -41,7 +64,12 @@ export async function PUT(request: Request) {
   try {
     const workspace = await getWorkspace();
     const parsed = PutSchema.safeParse(await request.json());
-    if (!parsed.success) return ok({ error: "Datos inválidos" }, { status: 400 });
+    if (!parsed.success) {
+      const detail = parsed.error.issues
+        .map((issue) => `${issue.path.join(".") || "criterio"}: ${issue.message}`)
+        .join("; ");
+      return ok({ error: `Criterios de ICP no válidos — ${detail}` }, { status: 400 });
+    }
     const data = parsed.data;
 
     const payload = {

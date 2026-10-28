@@ -1,5 +1,6 @@
 import type { IcpCriterion } from "./types";
 import type { LeadScore } from "./providers/contract";
+import { isKnownIcpField } from "./icp-fields";
 
 /**
  * Scoring ICP determinista (sin LLM) para que el usuario pueda entender
@@ -191,7 +192,10 @@ function hasData(field: string, ctx: ScoreContext): boolean {
     case "mapsRating":
       return ctx.mapsRating !== null && ctx.mapsRating !== undefined;
     default:
-      return true;
+      // Campo que el scorer no conoce (p. ej. uno escrito a mano en el
+      // playbook). Antes se puntuaba como "no cumple" y hundía la nota del
+      // lead. Ahora queda como "sin datos": ni suma ni penaliza, y se explica.
+      return isKnownIcpField(field);
   }
 }
 
@@ -202,6 +206,24 @@ function asArray(value: unknown): string[] {
     .split(/[,;|]/)
     .map((v) => v.trim())
     .filter(Boolean);
+}
+
+/**
+ * "contiene" con alternativas: "dueño|director" cumple si el texto contiene
+ * cualquiera de las alternativas.
+ *
+ * Antes se comparaba la cadena entera como un literal, así que un valor con
+ * barras ("dueño|duena|director") NUNCA podía coincidir con nada: el criterio
+ * quedaba siempre en "no detectado" y costaba su penalización. Ahora cada
+ * alternativa se evalúa por separado.
+ */
+function containsAny(haystack: string, needle: unknown): boolean {
+  const alternatives = String(needle ?? "")
+    .split("|")
+    .map((alt) => alt.trim())
+    .filter(Boolean);
+  if (alternatives.length === 0) return haystack.includes(norm(needle));
+  return alternatives.some((alt) => haystack.includes(norm(alt)));
 }
 
 export function evaluateCriterion(criterion: IcpCriterion, ctx: ScoreContext): boolean {
@@ -274,9 +296,9 @@ export function evaluateCriterion(criterion: IcpCriterion, ctx: ScoreContext): b
     case "not_equals":
       return actualStr !== norm(value);
     case "contains":
-      return actualStr.includes(norm(value));
+      return containsAny(actualStr, value);
     case "not_contains":
-      return !actualStr.includes(norm(value));
+      return !containsAny(actualStr, value);
     case "in":
       return asArray(value).map(norm).includes(actualStr);
     case "not_in":
