@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { fail, ok, serverError } from "@/lib/api";
 import { getWorkspace } from "@/lib/workspace";
@@ -59,6 +60,7 @@ export async function POST(request: Request) {
         }
       : null;
 
+    const messageId = `<${randomUUID()}@prospector.local>`;
     const conversation = await prisma.$transaction(async (tx) => {
       await tx.workspace.update({ where: { id: workspace.id }, data: { updatedAt: new Date() } });
       if (smtp) {
@@ -66,13 +68,13 @@ export async function POST(request: Request) {
         const [sent, campaignReservations, manualReservations] = await Promise.all([
           tx.conversation.count({ where: { workspaceId: workspace.id, channel: "email", direction: "outbound", sentAt: { gte: start } } }),
           tx.campaignRecipient.count({ where: { campaign: { workspaceId: workspace.id }, status: "sending" } }),
-          tx.conversation.count({ where: { workspaceId: workspace.id, channel: "email", status: "sending" } }),
+          tx.conversation.count({ where: { workspaceId: workspace.id, channel: "email", status: "sending", campaignId: null } }),
         ]);
         if (sent + campaignReservations + manualReservations >= identity.dailyLimit) return null;
       }
       return tx.conversation.create({ data: {
         workspaceId: workspace.id, leadId: lead.id, channel: "email", direction: "outbound",
-        subject: data.subject, body: data.body, status: smtp ? "sending" : "open",
+        subject: data.subject, body: data.body, status: smtp ? "sending" : "open", externalId: smtp ? messageId : null,
       } });
     });
     if (!conversation) return fail("Se ha alcanzado el límite diario de la identidad", 429);
@@ -83,9 +85,10 @@ export async function POST(request: Request) {
       body: data.body,
       replyTo: identity.email,
       smtp,
+      messageId,
     });
     await prisma.conversation.update({ where: { id: conversation.id }, data: {
-      status: result.sent ? "closed" : "open", sentAt: result.sent ? new Date() : null,
+      status: result.sent ? "closed" : result.deliveryUnknown ? "sending" : result.queued ? "open" : "failed", sentAt: result.sent ? new Date() : null, externalId: result.messageId ?? conversation.externalId,
     } });
 
     if (result.sent) await prisma.lead.updateMany({
@@ -96,7 +99,8 @@ export async function POST(request: Request) {
     return ok({
       sent: result.sent,
       queued: result.queued,
-      error: result.error ?? null,
+      error: result.deliveryUnknown ? `Resultado desconocido: comprueba el mensaje antes de reintentarlo. ${result.error ?? ""}` : result.error ?? null,
+      deliveryUnknown: result.deliveryUnknown ?? false,
       to,
     });
   } catch (err) {
