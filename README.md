@@ -437,7 +437,7 @@ npm run test:providers                          # discovery + crawl + SMTP + LLM
 npm run test:messages                           # redacción de emails con IA
 npm run test:delivery                           # SMTP simulado y SQLite temporal, sin correos reales
 npm run test:crawl -- https://clinicaelviso.es  # extracción de contactos de una web
-npm run test:e2e                                # flujo completo contra la API (con npm run dev)
+npm run test:e2e                                # consultas y exportación sin modificar datos (con npm run dev)
 
 npm run cleanup                                 # limpia duplicados y leads inservibles
 npm run cleanup -- --dry                        # sólo informa
@@ -453,9 +453,7 @@ Y el cron local para el barrido diario (a las 7:15, hora peninsular):
 15 7 * * * cd /ruta/al/proyecto && npm run sweep -- --cells 5 --enrich >> /tmp/sweep.log 2>&1
 ```
 
-`npm run test:e2e` recorre: analítica → playbook → leads con email → alta en
-lista → campaña de 3 pasos → destinatarios → vista previa con IA → ejecución →
-tareas manuales → respuesta en inbox → export CSV.
+`npm run test:e2e` comprueba consultas y exportación sin crear conversaciones ni modificar leads. Para probar envíos y recuperación de forma aislada, usa `npm run test:delivery`.
 
 ---
 

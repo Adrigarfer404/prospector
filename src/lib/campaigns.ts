@@ -211,7 +211,7 @@ export async function runCampaign(
         let channel = step.type;
         if (step.type === "email") {
           channel = "email";
-          const message = await generateEmailMessage(ctx, { subjectTemplate: step.subject, bodyTemplate: step.body, stepName: step.name });
+          const message = await generateEmailMessage(ctx, { subjectTemplate: step.subject, bodyTemplate: step.body, stepName: step.name, aiEnabled: campaign.aiPersonalize && step.aiEnabled });
           subject = message.subject;
           body = message.body;
           if (campaign.autoSend && identity && smtp && lead.email) {
@@ -265,7 +265,7 @@ export async function runCampaign(
           }
         } else if (step.type === "linkedin_connect" || step.type === "linkedin_message") {
           channel = "linkedin"; subject = step.type === "linkedin_connect" ? "Nota de conexión en LinkedIn" : "Mensaje en LinkedIn";
-          body = await generateLinkedInMessage(ctx);
+          body = await generateLinkedInMessage(ctx, { aiEnabled: campaign.aiPersonalize && step.aiEnabled, bodyTemplate: step.body });
         } else if (step.type === "call") {
           channel = "call"; subject = `Llamar a ${lead.fullName ?? ""}`.trim();
           body = `Llamar al ${lead.phoneNumber ?? "sin teléfono"}. Presentar ${ctx.playbook.ourCompany}.`;

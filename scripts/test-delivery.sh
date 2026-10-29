@@ -9,3 +9,7 @@ node --import tsx scripts/test-delivery.ts
 export DATABASE_URL="file:$TEST_DIR/safety.db"
 npx prisma db push --skip-generate --schema prisma/schema.prisma >/dev/null
 node --import tsx scripts/test-campaign-safety.ts
+export DATABASE_URL="file:$TEST_DIR/seed.db"
+npx prisma db push --skip-generate --schema prisma/schema.prisma >/dev/null
+node --import tsx scripts/seed.ts --skip-discovery >/dev/null
+node --import tsx scripts/test-seed-clean.ts

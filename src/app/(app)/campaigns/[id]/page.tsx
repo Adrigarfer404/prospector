@@ -889,10 +889,10 @@ export default function CampaignDetailPage() {
           <Field label="Paso">
             <Select
               value={previewStepId}
-              onChange={setPreviewStepId}
+              onChange={(value) => { setPreviewStepId(value); setPreviewMessages(null); }}
               options={[
                 { value: "", label: "Primer paso de email" },
-                ...steps.map((step) => ({
+                ...steps.filter((step) => step.type === "email").map((step) => ({
                   value: step.id,
                   label: `${step.order + 1}. ${step.name || stepTypeLabel(step.type)}`,
                 })),
@@ -902,7 +902,7 @@ export default function CampaignDetailPage() {
 
           {previewMessages === null ? (
             <p className="text-sm text-slate-500">
-              Pulsa &quot;Generar vista previa&quot; para ver los mensajes tal y como se enviarán.
+              Genera una muestra para revisar el contenido. Si el paso usa IA, el mensaje se genera de nuevo al ejecutar la campaña y puede variar.
             </p>
           ) : previewMessages.length === 0 ? (
             <p className="text-sm text-slate-500">
@@ -910,6 +910,7 @@ export default function CampaignDetailPage() {
             </p>
           ) : (
             <div className="space-y-3">
+              <p className="text-sm text-slate-500">Las muestras generadas con IA pueden variar al ejecutar la campaña.</p>
               {previewMessages.map((message) => (
                 <div key={message.leadId} className="rounded-lg border border-slate-200 p-3">
                   <div className="flex flex-wrap items-center gap-2">
