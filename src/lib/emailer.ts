@@ -20,6 +20,7 @@ export type SendResult = {
   messageId?: string;
   error?: string;
   queued: boolean;
+  deliveryUnknown?: boolean;
 };
 
 const transporterCache = new Map<string, Transporter>();
@@ -56,6 +57,7 @@ export async function sendEmail(opts: {
   replyTo?: string | null;
   smtp?: SmtpConfig | null;
   html?: string | null;
+  messageId?: string;
 }): Promise<SendResult> {
   if (!opts.smtp?.host) {
     return {
@@ -74,11 +76,16 @@ export async function sendEmail(opts: {
       text: opts.body,
       html: opts.html ?? undefined,
       replyTo: opts.replyTo ?? undefined,
+      messageId: opts.messageId,
     });
     return { ok: true, sent: true, queued: false, messageId: info.messageId };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, sent: false, queued: false, error: message };
+    // Una respuesta SMTP explícita de rechazo confirma que el servidor no aceptó
+    // el mensaje. Un corte de conexión puede ocurrir después de aceptarlo.
+    const responseCode = (err as { responseCode?: unknown })?.responseCode;
+    const rejected = typeof responseCode === "number" && responseCode >= 400 && responseCode < 600;
+    return { ok: false, sent: false, queued: false, error: message, deliveryUnknown: !rejected };
   }
 }
 

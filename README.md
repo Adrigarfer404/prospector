@@ -217,6 +217,11 @@ Marca la identidad como **por defecto**. Con eso, la campaña envía de verdad.
 Antes de activar una campaña con envío automático, revisa siempre la
 **vista previa de mensajes**: la IA los redacta, pero tú decides.
 
+Si la conexión se corta durante un envío, su resultado puede ser desconocido.
+La aplicación conserva el contenido y el identificador del mensaje y no lo
+reenvía automáticamente. Comprueba el proveedor SMTP y revisa el intento en la
+campaña pausada o en Inbox antes de confirmar si se envió.
+
 ---
 
 ## Cambiar de modelo de IA (Claude, OpenRouter, cualquier API)
@@ -430,6 +435,7 @@ npm run seed -- --queries "fisioterapia en Madrid" --limit 30 --enrich 10
 npm run test:finder -- "dentistas en Sevilla"   # AI Finder contra la web real
 npm run test:providers                          # discovery + crawl + SMTP + LLM
 npm run test:messages                           # redacción de emails con IA
+npm run test:delivery                           # SMTP simulado y SQLite temporal, sin correos reales
 npm run test:crawl -- https://clinicaelviso.es  # extracción de contactos de una web
 npm run test:e2e                                # flujo completo contra la API (con npm run dev)
 

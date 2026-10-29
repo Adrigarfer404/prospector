@@ -20,6 +20,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const conversation = await prisma.$transaction(async (tx) => {
       const existing = await tx.conversation.findFirst({ where: { id, workspaceId: workspace.id } });
       if (!existing) return null;
+      if (existing.status === "sending" && parsed.data.status !== undefined) return "sending" as const;
       const updated = await tx.conversation.update({ where: { id }, data: {
         ...parsed.data,
         ...(parsed.data.status === "closed" && existing.status !== "closed" && existing.direction === "outbound" ? { sentAt: new Date() } : {}),
@@ -32,6 +33,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       return updated;
     });
     if (!conversation) return fail("Conversación no encontrada", 404);
+    if (conversation === "sending") return fail("Revisa el envío interrumpido antes de cambiar su estado", 409);
     return ok({ conversation });
   } catch (err) {
     return serverError(err);

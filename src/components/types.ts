@@ -180,6 +180,7 @@ export type RecipientDTO = {
   lastSentAt: string | null;
   repliedAt: string | null;
   updatedAt: string;
+  deliveryAttempt: { subject: string | null; body: string; externalId: string | null; createdAt: string } | null;
   error: string | null;
   lead: {
     id: string;
@@ -209,6 +210,8 @@ export type CampaignDetailDTO = {
 export type ConversationDTO = {
   id: string;
   leadId: string | null;
+  campaignId: string | null;
+  externalId: string | null;
   leadName: string | null;
   leadCompany: string | null;
   channel: string;

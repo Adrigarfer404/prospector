@@ -52,6 +52,8 @@ export async function GET(request: Request) {
       conversations: conversations.map((c) => ({
         id: c.id,
         leadId: c.leadId,
+        campaignId: c.campaignId,
+        externalId: c.externalId,
         leadName: c.lead?.fullName ?? null,
         leadCompany: c.lead?.company?.name ?? null,
         channel: c.channel,

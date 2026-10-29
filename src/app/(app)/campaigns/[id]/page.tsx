@@ -796,6 +796,12 @@ export default function CampaignDetailPage() {
         <div className="space-y-3 text-sm text-slate-700">
           <p>Destinatario: <strong>{recovery?.lead.fullName || recovery?.lead.email}</strong></p>
           <p>Si confirmas que se envió, la secuencia avanzará y se anotará la confirmación. Si no se envió, quedará pendiente para otro intento.</p>
+          {recovery?.deliveryAttempt ? <div className="rounded border border-slate-200 p-3">
+            <p><strong>Asunto:</strong> {recovery.deliveryAttempt.subject || "Sin asunto"}</p>
+            <p><strong>Identificador:</strong> {recovery.deliveryAttempt.externalId || "No disponible"}</p>
+            <p><strong>Preparado:</strong> {formatDateTime(recovery.deliveryAttempt.createdAt)}</p>
+            <p className="mt-2 whitespace-pre-wrap">{recovery.deliveryAttempt.body}</p>
+          </div> : <p>No se conservó el contenido de este intento.</p>}
           {campaign.status !== "paused" ? <NoticeBox message="Pausa la campaña antes de resolver este envío." /> : null}
         </div>
       </Modal>

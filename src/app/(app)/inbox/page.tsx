@@ -54,6 +54,7 @@ export default function InboxPage() {
   const [replySubject, setReplySubject] = useState("");
   const [replyBody, setReplyBody] = useState("");
   const [sending, setSending] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -108,6 +109,16 @@ export default function InboxPage() {
     } catch (err) {
       setActionError(errorMessage(err));
     }
+  };
+
+  const resolveDelivery = async (outcome: "sent" | "not_sent") => {
+    if (!selected) return;
+    setSending(true); setActionError(null);
+    try {
+      await apiSend(`/api/inbox/${selected.id}/recover`, "POST", { outcome });
+      setReviewOpen(false); setNotice(outcome === "sent" ? "Envío confirmado." : "Envío marcado como no realizado.");
+      await load();
+    } catch (err) { setActionError(errorMessage(err)); } finally { setSending(false); }
   };
 
   const registerReply = async () => {
@@ -230,7 +241,7 @@ export default function InboxPage() {
                           tone={conversation.direction === "inbound" ? "green" : "slate"}
                           className="ml-auto"
                         >
-                          {conversation.direction === "inbound" ? "Recibido" : "Enviado"}
+                          {conversation.direction === "inbound" ? "Recibido" : conversation.status === "sending" ? "Resultado pendiente" : conversation.status === "closed" ? "Enviado" : conversation.status === "failed" ? "Fallido" : "Pendiente"}
                         </Badge>
                       </div>
                       <p className="mt-1 truncate pl-4 text-xs text-slate-600">
@@ -263,7 +274,7 @@ export default function InboxPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge tone={selected.direction === "inbound" ? "green" : "slate"}>
-                      {selected.direction === "inbound" ? "Recibido" : "Enviado"}
+                      {selected.direction === "inbound" ? "Recibido" : selected.status === "sending" ? "Resultado pendiente" : selected.status === "closed" ? "Enviado" : selected.status === "failed" ? "Fallido" : "Pendiente"}
                     </Badge>
                     <Badge tone="slate">{channelLabel(selected.channel)}</Badge>
                   </div>
@@ -276,7 +287,9 @@ export default function InboxPage() {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <Select
+                  {selected.status === "sending" ? (
+                    selected.campaignId ? <p className="text-sm text-amber-700">Revisa este envío desde su campaña.</p> : <Button variant="secondary" onClick={() => setReviewOpen(true)}>Revisar envío</Button>
+                  ) : <Select
                     value={selected.status}
                     onChange={(value) =>
                       updateConversation(
@@ -287,7 +300,7 @@ export default function InboxPage() {
                     }
                     options={STATUS_OPTIONS}
                     className="w-40 py-1.5 text-xs"
-                  />
+                  />}
                   <Button
                     variant="secondary"
                     onClick={() =>
@@ -319,6 +332,10 @@ export default function InboxPage() {
         </div>
       )}
 
+      <Modal open={reviewOpen} title="Revisar envío interrumpido" onClose={() => setReviewOpen(false)}
+        description="Comprueba en tu correo o proveedor SMTP si el mensaje se envió y asegúrate de que la ejecución se ha detenido. Podrás resolverlo cuando hayan pasado 15 minutos."
+        footer={<><Button variant="ghost" onClick={() => setReviewOpen(false)}>Cancelar</Button><Button variant="secondary" disabled={sending} onClick={() => resolveDelivery("not_sent")}>No se envió</Button><Button variant="primary" disabled={sending} onClick={() => resolveDelivery("sent")}>Sí se envió</Button></>}
+      ><p className="text-sm">Identificador del mensaje: {selected?.externalId || "No disponible"}</p></Modal>
       <Modal
         open={composeOpen}
         title="Registrar respuesta"

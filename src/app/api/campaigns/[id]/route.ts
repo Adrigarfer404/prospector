@@ -34,6 +34,11 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
       },
     });
     if (!campaign) return fail("Campaña no encontrada", 404);
+    const attempts = await prisma.conversation.findMany({
+      where: { campaignId: id, channel: "email", direction: "outbound", status: "sending" },
+      orderBy: { createdAt: "desc" },
+      select: { leadId: true, subject: true, body: true, externalId: true, createdAt: true },
+    });
 
     return ok({
       campaign: {
@@ -52,6 +57,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
           repliedAt: r.repliedAt,
           error: r.error,
           updatedAt: r.updatedAt,
+          deliveryAttempt: attempts.find((a) => a.leadId === r.leadId) ?? null,
           lead: r.lead,
         })),
       },

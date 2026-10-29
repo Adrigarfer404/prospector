@@ -27,13 +27,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const updated = await tx.campaignRecipient.updateMany({
         where: { id: recipient.id, status: "sending", updatedAt: recipient.updatedAt },
         data: parsed.data.outcome === "sent"
-          ? { status: "pending", currentStep: { increment: 1 }, sentCount: { increment: 1 }, lastSentAt: now, error: null }
-          : { status: "pending", error: null },
+          ? { status: recipient.repliedAt ? "replied" : "pending", currentStep: { increment: 1 }, sentCount: { increment: 1 }, lastSentAt: now, error: null }
+          : { status: recipient.repliedAt ? "replied" : "pending", error: null },
       });
       if (!updated.count) return { error: "El estado ha cambiado; actualiza la página", status: 409 };
+      const attempt = await tx.conversation.findFirst({ where: { workspaceId: workspace.id, leadId: recipient.leadId, campaignId: id, channel: "email", direction: "outbound", status: "sending" }, orderBy: { createdAt: "desc" } });
+      if (attempt) await tx.conversation.update({ where: { id: attempt.id }, data: parsed.data.outcome === "sent" ? { status: "closed", sentAt: now } : { status: "cancelled" } });
       if (parsed.data.outcome === "sent") {
         const recorded = await tx.conversation.findFirst({ where: { workspaceId: workspace.id, leadId: recipient.leadId, campaignId: id, channel: "email", direction: "outbound", sentAt: { gte: recipient.updatedAt } } });
-        if (!recorded) await tx.conversation.create({ data: { workspaceId: workspace.id, leadId: recipient.leadId, campaignId: id, channel: "email", direction: "outbound", subject: "Envío confirmado manualmente", body: "El usuario confirmó que este envío interrumpido se realizó. El contenido original no está disponible.", status: "closed", sentAt: now } });
+        if (!attempt && !recorded) await tx.conversation.create({ data: { workspaceId: workspace.id, leadId: recipient.leadId, campaignId: id, channel: "email", direction: "outbound", subject: "Envío confirmado manualmente", body: "El usuario confirmó que este envío interrumpido se realizó. El contenido original no está disponible.", status: "closed", sentAt: now } });
         await tx.lead.updateMany({ where: { id: recipient.leadId, status: { notIn: ["unsubscribed", "do_not_contact", "bounced", "replied"] } }, data: { status: "contacted", lastContactedAt: now } });
       }
       await tx.activity.create({ data: { workspaceId: workspace.id, type: "campaign.recovery", subject: recipient.lead.fullName ?? recipient.lead.email ?? recipient.leadId, payload: JSON.stringify({ campaignId: id, recipientId, outcome: parsed.data.outcome }) } });
