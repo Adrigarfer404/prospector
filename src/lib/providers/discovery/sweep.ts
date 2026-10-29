@@ -1,9 +1,8 @@
 /**
  * Barrido diario de Google Maps.
  *
- * Construye el censo: recorre una matriz de (categoría × provincia) con un
- * cursor persistido en `SweepState`, de forma que cada pasada cubre celdas
- * nuevas y ninguna se repite.
+ * Recorre una matriz de categoría × ubicación con un cursor persistido en
+ * `SweepState`. Al terminar la matriz vuelve a empezar.
  *
  * El orden de las provincias NO es alfabético: empieza por las de mayor
  * densidad de mercado, que es donde hay más negocios quemjora vender.
@@ -16,7 +15,7 @@ import { mapsPlaceToBusiness } from "./maps";
 import { outscraperConfigured, outscraperMapsSearch } from "./outscraper";
 
 export type SweepCategory = {
-  /** Identificador estable (tipo primario de Google Maps). */
+  /** Identificador estable usado en la línea de comandos. */
   id: string;
   /** Etiqueta legible. */
   label: string;
@@ -25,8 +24,8 @@ export type SweepCategory = {
 };
 
 /**
- * Categorías por sector. El `id` es el `primaryType` de Google Maps, así que
- * se puede usar para filtrar por tipo cuando la API lo devuelve.
+ * Categorías por sector. El texto de búsqueda se envía a Google Maps; el id
+ * se usa solo para seleccionar la categoría desde la línea de comandos.
  */
 export const SWEEP_CATEGORIES: SweepCategory[] = [
   { id: "physiotherapist", label: "Fisioterapia", query: "fisioterapia" },
@@ -57,28 +56,28 @@ export const SWEEP_PROVINCES: SweepProvince[] = [
   { id: "barcelona", name: "Barcelona" },
   { id: "valencia", name: "Valencia" },
   { id: "sevilla", name: "Sevilla" },
-  { id: "bizkaia", name: "Bilbao" },
+  { id: "bizkaia", name: "Bizkaia" },
   { id: "zaragoza", name: "Zaragoza" },
   { id: "malaga", name: "Málaga" },
   { id: "alicante", name: "Alicante" },
-  { id: "baleares", name: "Palma de Mallorca" },
+  { id: "baleares", name: "Illes Balears" },
   { id: "murcia", name: "Murcia" },
   { id: "a-coruna", name: "A Coruña" },
   { id: "granada", name: "Granada" },
   { id: "cordoba", name: "Córdoba" },
   { id: "valladolid", name: "Valladolid" },
-  { id: "pontevedra", name: "Vigo" },
-  { id: "navarra", name: "Pamplona" },
-  { id: "cantabria", name: "Santander" },
-  { id: "alava", name: "Vitoria-Gasteiz" },
-  { id: "gipuzkoa", name: "Donostia-San Sebastián" },
-  { id: "las-palmas", name: "Las Palmas de Gran Canaria" },
+  { id: "pontevedra", name: "Pontevedra" },
+  { id: "navarra", name: "Navarra" },
+  { id: "cantabria", name: "Cantabria" },
+  { id: "alava", name: "Álava" },
+  { id: "gipuzkoa", name: "Gipuzkoa" },
+  { id: "las-palmas", name: "Las Palmas" },
   { id: "tenerife", name: "Santa Cruz de Tenerife" },
-  { id: "castellon", name: "Castellón de la Plana" },
-  { id: "asturias", name: "Gijón" },
+  { id: "castellon", name: "Castellón" },
+  { id: "asturias", name: "Asturias" },
   { id: "toledo", name: "Toledo" },
   { id: "albacete", name: "Albacete" },
-  { id: "santa-cruz", name: "Cáceres" },
+  { id: "caceres", name: "Cáceres" },
   { id: "badajoz", name: "Badajoz" },
   { id: "burgos", name: "Burgos" },
   { id: "salamanca", name: "Salamanca" },
@@ -92,7 +91,7 @@ export const SWEEP_PROVINCES: SweepProvince[] = [
   { id: "cadiz", name: "Cádiz" },
   { id: "almeria", name: "Almería" },
   { id: "ciudad-real", name: "Ciudad Real" },
-  { id: "merida", name: "Mérida" },
+  { id: "la-rioja", name: "La Rioja" },
   { id: "guadalajara", name: "Guadalajara" },
   { id: "huesca", name: "Huesca" },
   { id: "teruel", name: "Teruel" },
@@ -104,6 +103,7 @@ export const SWEEP_PROVINCES: SweepProvince[] = [
   { id: "lugo", name: "Lugo" },
   { id: "melilla", name: "Melilla" },
   { id: "ceuta", name: "Ceuta" },
+  { id: "zamora", name: "Zamora" },
 ];
 
 export type SweepCell = {
@@ -112,7 +112,7 @@ export type SweepCell = {
   province: SweepProvince;
 };
 
-/** Matriz completa: provincia (por mercado) × categoría. */
+/** Matriz completa: ubicación (por mercado) × categoría. */
 export function sweepMatrix(): SweepCell[] {
   const cells: SweepCell[] = [];
   let index = 0;
@@ -164,32 +164,23 @@ function cellLabel(cell: SweepCell): string {
  * La celda de partida se lee del cursor guardado, así que las pasadas son
  * continuas: la primera del día sigue donde se quedó la última.
  */
-export async function runMapsSweep(options: SweepOptions): Promise<SweepOutcome> {
+export async function runMapsSweep(options: SweepOptions, deps = { outscraperConfigured, outscraperMapsSearch, enrichBusiness, findEmails, verifyEmails }): Promise<SweepOutcome> {
   const warnings: string[] = [];
   const matrix = sweepMatrix();
 
-  if (!outscraperConfigured()) {
-    return {
-      cells: [],
-      cursorBefore: 0,
-      cursorAfter: 0,
-      totalCells: matrix.length,
-      companies: 0,
-      leads: 0,
-      warnings: [
-        "Google Maps no está configurado: define OUTSCRAPER_API_KEY en el .env para lanzar el barrido.",
-      ],
-    };
-  }
-
-  const budget = Math.max(1, options.cells ?? 3);
+  const budget = options.cells ?? 3;
   const limit = options.limit ?? 25;
   const minReviews = options.minReviews ?? 0;
-
-  const state = await prisma.sweepState.findUnique({
-    where: { workspaceId_source: { workspaceId: options.workspaceId, source: "maps" } },
-  });
+  if (!Number.isInteger(budget) || budget < 1 || budget > matrix.length) throw new Error(`cells debe ser un entero entre 1 y ${matrix.length}`);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("limit debe ser un entero entre 1 y 100");
+  if (!Number.isInteger(minReviews) || minReviews < 0) throw new Error("min-reviews debe ser un entero no negativo");
+  const state = await prisma.sweepState.findUnique({ where: { workspaceId_source: { workspaceId: options.workspaceId, source: "maps" } } });
   const cursorBefore = state?.cursor ?? 0;
+  const targeted = Boolean(options.categoryId || options.provinceId);
+  // Conserva los alias usados en versiones anteriores.
+  const provinceId = options.provinceId === "santa-cruz" ? "caceres" : options.provinceId === "merida" ? "badajoz" : options.provinceId;
+  if (options.categoryId && !SWEEP_CATEGORIES.some(c => c.id === options.categoryId)) throw new Error("Categoría desconocida");
+  if (provinceId && !SWEEP_PROVINCES.some(p => p.id === provinceId)) throw new Error("Ubicación desconocida");
 
   // Celdas a procesar: las N siguientes del cursor, o las forzadas por CLI.
   let selected: SweepCell[];
@@ -197,7 +188,7 @@ export async function runMapsSweep(options: SweepOptions): Promise<SweepOutcome>
     selected = matrix.filter(
       (cell) =>
         (!options.categoryId || cell.category.id === options.categoryId) &&
-        (!options.provinceId || cell.province.id === options.provinceId),
+        (!options.provinceId || cell.province.id === provinceId),
     );
     selected = selected.slice(0, budget);
   } else {
@@ -208,14 +199,21 @@ export async function runMapsSweep(options: SweepOptions): Promise<SweepOutcome>
     }
   }
 
+  if (options.dryRun) return { cells: selected.map(cell => ({ label: cellLabel(cell), found: 0, saved: 0, leads: 0 })), cursorBefore, cursorAfter: cursorBefore, totalCells: matrix.length, companies: 0, leads: 0, warnings: ["Simulación: no se ha consultado Outscraper ni guardado datos."] };
+  if (!deps.outscraperConfigured()) return { cells: [], cursorBefore, cursorAfter: cursorBefore, totalCells: matrix.length, companies: 0, leads: 0, warnings: ["Google Maps no está configurado: define OUTSCRAPER_API_KEY en el .env para lanzar el barrido."] };
+
+  let cursorAfter = cursorBefore;
   const results: SweepOutcome["cells"] = [];
   let companies = 0;
   let leads = 0;
 
   for (const cell of selected) {
     const label = cellLabel(cell);
+    let found = 0;
+    let saved = 0;
+    let cellLeads = 0;
     try {
-      const places = await outscraperMapsSearch({
+      const places = await deps.outscraperMapsSearch({
         query: cell.category.query,
         location: `${cell.province.name}, Spain`,
         limit,
@@ -226,25 +224,23 @@ export async function runMapsSweep(options: SweepOptions): Promise<SweepOutcome>
         .filter((business) => business !== null)
         .filter((business) => Number(business.raw.reviewCount ?? 0) >= minReviews);
 
-      let saved = 0;
-      let cellLeads = 0;
-
+      found = businesses.length;
       for (const business of businesses) {
-        if (options.dryRun) {
-          saved += 1;
-          continue;
-        }
-
         // Crawl + emails (opt-in): sólo los negocios con web tienen email
         // recuperable; los demás se guardan como fendibles (teléfono).
         let enrichment: Record<string, unknown> = {};
         let signals: string[] = [];
         let emails: string[] = [];
+        let selectedSource = "crawl";
+        let selectedStatus = "unverified";
+        let selectedConfidence = 80;
         if (options.enrich && business.website) {
           try {
-            const crawled = await enrichBusiness(business);
+            const crawled = await deps.enrichBusiness(business);
             signals = crawled.signals;
             emails = crawled.emails.map((candidate) => candidate.email).filter(Boolean);
+            const firstEmail = crawled.emails.find(candidate => candidate.email === emails[0]);
+            if (firstEmail) { selectedSource = firstEmail.source === "web" ? "crawl" : firstEmail.source; selectedConfidence = firstEmail.confidence; }
             enrichment = {
               teamMembers: crawled.contacts.map((contact) => ({
                 name: contact.name,
@@ -253,12 +249,10 @@ export async function runMapsSweep(options: SweepOptions): Promise<SweepOutcome>
               contactPageUrl: crawled.website?.contactPageUrl ?? null,
             };
           } catch (err) {
-            warnings.push(
-              `No se pudo enriquecer ${business.name}: ${err instanceof Error ? err.message : String(err)}`,
-            );
+            throw new Error(`No se pudo enriquecer ${business.name}: ${err instanceof Error ? err.message : String(err)}`);
           }
         } else if (!business.website) {
-          signals = ["Sin web: necesita presencia digital y agenda online"];
+          signals = ["Sin web propia identificada en Google Maps"];
         }
 
         const company = await upsertCompany(options.workspaceId, business, {
@@ -274,19 +268,20 @@ export async function runMapsSweep(options: SweepOptions): Promise<SweepOutcome>
         // Lead: el propietario si el negocio lleva su nombre; si no, el
         // propio negocio. El email genérico sólo para el contacto principal.
         const contactName = personFromBusinessName(business.name) ?? business.name;
-        let email: string | null = emails[0] ?? null;
+        let email: string | null = emails[0]?.trim().toLowerCase() ?? null;
         if (!email && business.domain) {
           try {
-            const candidates = await findEmails({
+            const candidates = await deps.findEmails({
               domain: business.domain,
               fullName: contactName,
               website: business.website,
               knownEmails: emails,
             });
-            const verified = await verifyEmails(candidates, { max: 4 });
-            email = verified.find((v) => v.status === "verified")?.email ?? email;
-          } catch {
-            // sin email: se queda con el teléfono
+            const verified = await deps.verifyEmails(candidates, { max: 4 });
+            const valid = verified.find((v) => v.status === "verified");
+            if (valid) { email = valid.email.trim().toLowerCase(); selectedStatus = "verified"; selectedSource = valid.candidate.source === "web" ? "crawl" : valid.candidate.source; selectedConfidence = valid.confidence; }
+          } catch (err) {
+            throw new Error(`No se pudieron comprobar emails de ${business.name}: ${err instanceof Error ? err.message : String(err)}`);
           }
         }
 
@@ -313,54 +308,35 @@ export async function runMapsSweep(options: SweepOptions): Promise<SweepOutcome>
         leads += 1;
         cellLeads += 1;
 
-        if (email) {
-          await prisma.leadEmail.deleteMany({ where: { leadId: lead.id, email } });
-          await prisma.leadEmail.create({
-            data: {
-              leadId: lead.id,
-              email,
-              source: "crawl",
-              status: "verified",
-              confidence: 80,
-              verifiedAt: new Date(),
-            },
-          });
+        if (email && lead.email?.toLowerCase() === email.toLowerCase()) {
+          const existingEmail = await prisma.leadEmail.findUnique({ where: { leadId_email: { leadId: lead.id, email } } });
+          if (!existingEmail) {
+            await prisma.leadEmail.create({ data: { leadId: lead.id, email, source: selectedSource, status: selectedStatus, confidence: selectedConfidence, verifiedAt: selectedStatus === "verified" ? new Date() : null } });
+          } else if (selectedStatus === "verified" && existingEmail.status !== "verified") {
+            await prisma.leadEmail.update({ where: { id: existingEmail.id }, data: { source: selectedSource, status: "verified", confidence: selectedConfidence, verifiedAt: new Date() } });
+          }
         }
 
         const { loadCriteria } = await import("../../pipeline");
         await scoreAndSaveLead(options.workspaceId, lead.id, await loadCriteria(options.workspaceId));
       }
 
+      if (!targeted) {
+        const nextCursor = (cell.index + 1) % matrix.length;
+        await prisma.sweepState.upsert({
+          where: { workspaceId_source: { workspaceId: options.workspaceId, source: "maps" } },
+          create: { workspaceId: options.workspaceId, source: "maps", cursor: nextCursor, total: matrix.length, lastRunAt: new Date(), stats: stringifyStats({ cells: results.length + 1, companies, leads }) },
+          update: { cursor: nextCursor, total: matrix.length, lastRunAt: new Date(), stats: stringifyStats({ cells: results.length + 1, companies, leads }) },
+        });
+        cursorAfter = nextCursor;
+      }
       results.push({ label, found: businesses.length, saved, leads: cellLeads });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       warnings.push(`Fallo en ${label}: ${message}`);
-      results.push({ label, found: 0, saved: 0, leads: 0, skipped: message });
+      results.push({ label, found, saved, leads: cellLeads, skipped: message });
+      break;
     }
-  }
-
-  const cursorAfter = options.dryRun
-    ? cursorBefore
-    : (cursorBefore + selected.length) % matrix.length;
-
-  if (!options.dryRun) {
-    await prisma.sweepState.upsert({
-      where: { workspaceId_source: { workspaceId: options.workspaceId, source: "maps" } },
-      create: {
-        workspaceId: options.workspaceId,
-        source: "maps",
-        cursor: cursorAfter,
-        total: matrix.length,
-        lastRunAt: new Date(),
-        stats: stringifyStats({ cells: selected.length, companies, leads }),
-      },
-      update: {
-        cursor: cursorAfter,
-        total: matrix.length,
-        lastRunAt: new Date(),
-        stats: stringifyStats({ cells: selected.length, companies, leads }),
-      },
-    });
   }
 
   return {

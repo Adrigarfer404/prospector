@@ -82,7 +82,7 @@ export function mapsPlaceToBusiness(place: OutscraperPlace): DiscoveredBusiness 
   if (!name) return null;
 
   const placeId = place.place_id ?? null;
-  const address = place.address ?? null;
+  const address = place.full_address ?? place.address ?? null;
   const reviewCount = Number(place.reviews ?? 0) || 0;
   const rating = Number(place.rating ?? 0) || 0;
 
@@ -95,8 +95,8 @@ export function mapsPlaceToBusiness(place: OutscraperPlace): DiscoveredBusiness 
     website: place.site ?? null,
     domain: domainFromUrl(place.site),
     phoneNumber: place.phone ?? null,
-    city: cityFromAddress(address),
-    region: null,
+    city: place.city ?? cityFromAddress(address),
+    region: place.state ?? null,
     country: "ES",
     latitude: place.latitude ?? null,
     longitude: place.longitude ?? null,
@@ -106,7 +106,7 @@ export function mapsPlaceToBusiness(place: OutscraperPlace): DiscoveredBusiness 
       placeId,
       rating,
       reviewCount,
-      mapsUrl: place.google_maps_url ?? null,
+      mapsUrl: place.google_maps_url ?? (placeId ? `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(placeId)}` : null),
       businessStatus: place.business_status ?? null,
       types: Array.isArray(place.types) ? place.types : null,
     },

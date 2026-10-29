@@ -27,7 +27,8 @@
     "test:ai": "tsx scripts/test-ai.ts",
     "test:ai:compat": "tsx scripts/test-ai-compat.ts",
     "backup": "tsx scripts/backup-db.ts",
-    "test:delivery": "sh scripts/test-delivery.sh"
+    "test:delivery": "sh scripts/test-delivery.sh",
+    "test:sweep": "sh scripts/test-sweep.sh"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
