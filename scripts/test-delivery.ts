@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { prisma } from "../src/lib/db";
 import { getTransporter } from "../src/lib/emailer";
 import { runCampaign, registerReply } from "../src/lib/campaigns";
+import { POST as preview } from "../src/app/api/campaigns/[id]/preview/route";
+import { setAiSettingsOverride } from "../src/lib/ai";
+import { generateEmailMessage } from "../src/lib/messages";
 import { POST as manualSend } from "../src/app/api/inbox/send/route";
 import { POST as recoverManual } from "../src/app/api/inbox/[id]/recover/route";
 import { PATCH as patchInbox } from "../src/app/api/inbox/[id]/route";
@@ -29,15 +32,29 @@ async function main() {
   };
   async function fixture(dailyLimit = 50) {
     const lead = await prisma.lead.create({ data: { workspaceId: workspace.id, fullName: "Ana", email: `lead-${Math.random()}@example.com` } });
-    const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: "test", status: "active", autoSend: true, dailyLimit, steps: { create: [{ order: 0, type: "email" }, { order: 1, type: "email", delayDays: 1 }] }, recipients: { create: { leadId: lead.id } } }, include: { recipients: true } });
+    const campaign = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: "test", status: "active", autoSend: true, dailyLimit, steps: { create: [{ order: 0, type: "email", subject: "Hola {{firstName}}", body: "Hola {{firstName}}, soy {{senderName}}.", aiEnabled: false }, { order: 1, type: "email", delayDays: 1 }] }, recipients: { create: { leadId: lead.id } } }, include: { recipients: true } });
     return { lead, campaign, recipient: campaign.recipients[0] };
   }
   const success = await fixture();
+  const previewResponse = await preview(new Request("http://localhost", { method: "POST", body: JSON.stringify({ leadIds: [success.lead.id] }) }), { params: Promise.resolve({ id: success.campaign.id }) });
+  assert.equal(previewResponse.status, 200);
+  const previewResult = await previewResponse.json();
+  assert.equal(previewResult.messages[0].source, "template");
+  assert.equal(previewResult.messages[0].subject, "Hola Ana");
+  assert.equal(previewResult.messages[0].body, "Hola Ana, soy test.");
+  const bogusPreview = await preview(new Request("http://localhost", { method: "POST", body: JSON.stringify({ leadIds: [success.lead.id], stepId: "invalid" }) }), { params: Promise.resolve({ id: success.campaign.id }) });
+  assert.equal(bogusPreview.status, 400);
+  let modelCalls = 0;
+  globalThis.fetch = async () => { modelCalls++; throw new Error("IA desactivada en pruebas"); };
+  const template = await generateEmailMessage({ lead: { firstName: "Ana" }, company: null, playbook: {} }, { aiEnabled: false, subjectTemplate: "Hola {{firstName}}", bodyTemplate: "Mensaje {{firstName}}" });
+  assert.equal(modelCalls, 0); assert.equal(template.body, "Mensaje Ana");
   assert.equal((await runCampaign(workspace.id, success.campaign.id)).sent, 1);
   let recipient = await prisma.campaignRecipient.findUniqueOrThrow({ where: { id: success.recipient.id } });
   assert.equal(recipient.status, "pending"); assert.equal(recipient.currentStep, 1); assert.equal(recipient.sentCount, 1);
   const accepted = await prisma.conversation.findFirstOrThrow({ where: { campaignId: success.campaign.id } });
   assert.equal(accepted.status, "closed"); assert.ok(accepted.externalId); assert.ok(accepted.sentAt);
+  assert.equal(accepted.subject, previewResult.messages[0].subject); assert.equal(accepted.body, previewResult.messages[0].body);
+  assert.equal(modelCalls, 0);
   await runCampaign(workspace.id, success.campaign.id);
   assert.equal(calls, 1, "el siguiente paso todavía no ha vencido");
 
@@ -103,6 +120,17 @@ async function main() {
   assert.equal((await recoverManual(manualRecovery(), manualParams)).status, 200);
   assert.equal((await recoverManual(manualRecovery(), manualParams)).status, 409);
   assert.equal((await prisma.conversation.findUniqueOrThrow({ where: { id: manual.id } })).status, "cancelled");
-  console.log("PASS: aceptación, rechazo, resultado incierto, recuperación, espera, límite, concurrencia y bloqueo");
+  setAiSettingsOverride({ provider: "anthropic", model: "test", baseUrl: "https://mock.invalid", apiKey: "test" });
+  let prompt = "";
+  globalThis.fetch = async (_url, init) => {
+    prompt = String(init?.body ?? "");
+    return new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ subject: "Asunto IA", body: "Este es un mensaje de prueba suficientemente largo." }) }] }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const personalized = await generateEmailMessage({ lead: { firstName: "Ana" }, company: null, playbook: {} }, { aiEnabled: true, subjectTemplate: "Asunto {{firstName}}", bodyTemplate: "Borrador para {{firstName}}" });
+  assert.equal(personalized.source, "llm");
+  assert.ok(prompt.includes("Asunto Ana")); assert.ok(prompt.includes("Borrador para Ana"));
+  assert.ok(prompt.includes("No inventes hechos"));
+  setAiSettingsOverride(null);
+  console.log("PASS: plantillas, vista previa, aceptación, rechazo, resultado incierto, recuperación, espera, límite, concurrencia y bloqueo");
 }
 main().catch(err => { console.error(err); process.exitCode = 1; }).finally(() => prisma.$disconnect());

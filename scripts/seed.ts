@@ -65,7 +65,7 @@ const DEFAULT_SEQUENCE = [
     delayHours: 0,
     subject: "Tu agenda, sin huecos ni pacientes perdidos",
     body:
-      "Hola {{firstName}},\n\nHe visto que {{company}} gestiona las citas {{city}}. En AgendaOS montamos la agenda online, los recordatorios y el cobro de la reserva en el mismo sitio, para que no se te escape ningún paciente.\n\n{{cta}}\n\n{{signature}}",
+      "Hola {{firstName}},\n\nTe escribo para presentarte AgendaOS, una herramienta para organizar citas, recordatorios y cobros en un mismo sitio.\n\n{{cta}}\n\n{{signature}}",
     aiEnabled: true,
   },
   {
