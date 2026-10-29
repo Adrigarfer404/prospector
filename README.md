@@ -101,7 +101,7 @@ Dos avisos:
 | **Hunter.io** | Emails con score. | `HUNTER_API_KEY` (opcional). |
 | **Crawler de la web del negocio** | Emails, teléfonos, equipo con nombre y apellidos, señales de agenda externa. | Nada. |
 | **Verificación SMTP** | Confirma si el buzón existe (sin enviar nada). | Nada. |
-| **Google Maps (opt-in)** | El censo: negocios que la búsqueda web no alcanza (la cola larga), su teléfono, su web y su **número de reseñas**, que es la señal de demanda que se usa para priorizar. | `OUTSCRAPER_API_KEY` (opcional). |
+| **Google Maps (opt-in)** | Busca negocios adicionales, su teléfono, su web y su **número de reseñas**, que se usa para priorizar. | `OUTSCRAPER_API_KEY` (opcional). |
 
 ### Por qué el BORME sólo no sirve (y sí combinado
 
@@ -145,7 +145,7 @@ npm run cleanup -- --dry # sólo informa, no toca nada
 
 La búsqueda web devuelve el *top* de resultados: negocios que ya están bien
 posicionados en SEO, que suelen ser los que **ya tienen web y agenda**. Para
-conseguir el resto hace falta un censo, y eso es lo que aporta Maps.
+Google Maps puede aportar negocios adicionales, aunque cada consulta tiene un límite y no garantiza una cobertura completa.
 
 **Qué aporta y qué no:**
 
@@ -171,23 +171,38 @@ cp .env.example .env
 Sin `OUTSCRAPER_API_KEY` el checkbox aparece deshabilitado y el flujo es
 exactamente el de antes: búsqueda web + BORME.
 
-**Barrido diario (construye el censo):**
+**Barrido por ubicaciones (ejecución manual o programada):**
 
 ```bash
 npm run sweep -- --cells 5          # 5 celdas (categoría × provincia)
 npm run sweep -- --enrich            # además: crawl de web + email + alta de leads
 npm run sweep -- --category dentist --province valencia
-npm run sweep -- --dry               # simulación, no escribe nada
-npm run sweep -- --reset             # vuelve el cursor al principio
+npm run sweep -- --dry               # muestra celdas, sin red ni escrituras
+npm run sweep -- --reset             # vuelve el cursor al principio y ejecuta
+npm run sweep -- --unlock            # libera un bloqueo tras un cierre inesperado
 ```
 
-El barrido recorre una matriz de **10 categorías × 51 provincias** con un cursor
-persistido (`SweepState`), así cada pasada cubre celdas nuevas y ninguna se
-repite. Las provincias **no** están en orden alfabético: empiezan por las de
-mayor densidad de mercado (Madrid, Barcelona, Valencia…) y siguen con el resto.
+El barrido recorre **10 categorías × 52 ubicaciones** (50 provincias, Ceuta
+y Melilla). Cada celda es una búsqueda en Google Maps, no un censo completo:
+los resultados dependen del proveedor y del límite de la consulta. El cursor
+persiste tras cada celda completada; si una celda falla, se detiene y se vuelve
+a intentar en la siguiente pasada. Las búsquedas con `--category` o
+`--province` no modifican el cursor general. Las ubicaciones empiezan por los
+mercados de mayor tamaño.
 
-Cada pasada deja traza en la tabla `Job` y avanza el cursor, de modo que se
-puede encadenar con un `cron` local sin más configuración.
+El script no se programa por sí solo. Cada ejecución real deja un `Job` y
+rechaza ejecuciones simultáneas. Si se interrumpe el proceso, comprueba que ya
+no está en marcha antes de usar `--unlock`; después puedes reanudar el barrido.
+`--dry` solo muestra las celdas seleccionadas, sin llamar al proveedor, crear
+trabajos ni modificar el cursor. La API de Outscraper puede generar costes; la
+[documentación de su API](https://docs.outscraper.com/endpoints/google-maps-search/)
+describe sus parámetros y formato de respuesta. Si la conexión se interrumpe,
+el proveedor podría haber procesado una petición aunque Prospector no recibiera
+el resultado; consulta el proveedor antes de reintentar si te preocupa el coste.
+
+Con `--enrich`, los emails encontrados se guardan sin verificar salvo que una
+verificación explícita los confirme. Un barrido posterior no degrada un email
+que ya estuviera verificado.
 
 **Sobre los datos:** Google Maps no da emails y este flujo sólo guarda datos de
 negocio (nombre comercial, dirección, teléfono publicado, web, reseñas). Los
@@ -436,6 +451,7 @@ npm run test:finder -- "dentistas en Sevilla"   # AI Finder contra la web real
 npm run test:providers                          # discovery + crawl + SMTP + LLM
 npm run test:messages                           # redacción de emails con IA
 npm run test:delivery                           # SMTP simulado y SQLite temporal, sin correos reales
+npm run test:sweep                              # barrido y API simulados en SQLite temporal
 npm run test:crawl -- https://clinicaelviso.es  # extracción de contactos de una web
 npm run test:e2e                                # consultas y exportación sin modificar datos (con npm run dev)
 

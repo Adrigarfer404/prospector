@@ -13,24 +13,25 @@
  */
 
 const OUTSCRAPER_BASE = "https://api.outscraper.com";
-const DEFAULT_TIMEOUT_MS = 45_000;
+const DEFAULT_TIMEOUT_MS = 180_000;
 /** Tope de registros por petición de Outscraper. */
 const MAX_LIMIT_PER_REQUEST = 100;
 
-/** Campos que pedimos explícitamente para no pagar por datos que no usamos. */
+/** Campos necesarios para guardar y puntuar los negocios. */
 const REQUESTED_FIELDS = [
-  "title",
+  "name",
   "place_id",
-  "address",
+  "full_address",
+  "city",
+  "state",
   "phone",
   "site",
   "rating",
   "reviews",
   "category",
-  "types",
+  "subtypes",
   "latitude",
   "longitude",
-  "google_maps_url",
   "business_status",
   "description",
 ];
@@ -40,6 +41,10 @@ export type OutscraperPlace = {
   name?: string | null;
   place_id?: string | null;
   address?: string | null;
+  full_address?: string | null;
+  city?: string | null;
+  state?: string | null;
+  subtypes?: string | null;
   phone?: string | null;
   site?: string | null;
   rating?: number | null;
@@ -105,39 +110,34 @@ export async function outscraperMapsSearch(
   const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
   try {
-    const response = await fetch(`${OUTSCRAPER_BASE}/maps`, {
+    const response = await fetch(`${OUTSCRAPER_BASE}/google-maps-search`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers: { "Content-Type": "application/json", Accept: "application/json", "X-API-KEY": apiKey },
       body: JSON.stringify({
-        query: params.query,
-        ...(params.location ? { location: params.location } : {}),
+        query: [[params.query, params.location].filter(Boolean).join(", ")],
         limit,
         language: params.language ?? "es",
-        search_engine: "google_maps",
-        fields: REQUESTED_FIELDS,
+        region: "ES",
+        async: false,
+        fields: REQUESTED_FIELDS.join(","),
       }),
       signal: controller.signal,
     });
 
-    if (!response.ok) {
+    if (!response.ok || response.status !== 200) {
       const body = await response.text().catch(() => "");
-      throw new Error(
-        `Outscraper respondió ${response.status}: ${body.slice(0, 200) || "(sin cuerpo)"}`,
-      );
+      throw new Error(`Outscraper respondió ${response.status}: ${body.slice(0, 200) || "(sin cuerpo)"}`);
     }
-
-    const json: unknown = await response.json();
-    const data = Array.isArray(json)
-      ? json
-      : Array.isArray((json as { data?: unknown })?.data)
-        ? ((json as { data: unknown[] }).data)
-        : [];
-
-    return data as OutscraperPlace[];
+    const json = await response.json() as { status?: unknown; data?: unknown };
+    if (String(json.status).toLowerCase() !== "success" || !Array.isArray(json.data)) {
+      throw new Error("Outscraper no devolvió un resultado completo válido");
+    }
+    // Un resultado por consulta: data es normalmente [[negocio, ...]].
+    const groups: unknown[] = json.data.flat();
+    if (groups.some(item => !item || typeof item !== "object" || Array.isArray(item))) {
+      throw new Error("Formato de negocios de Outscraper inválido");
+    }
+    return groups as OutscraperPlace[];
   } finally {
     clearTimeout(timer);
   }
