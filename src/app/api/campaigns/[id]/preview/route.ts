@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ok, serverError } from "@/lib/api";
+import { fail, ok, serverError } from "@/lib/api";
 import { getWorkspace } from "@/lib/workspace";
 import { buildMessageContext } from "@/lib/campaigns";
 import { generateEmailMessage } from "@/lib/messages";
@@ -21,8 +21,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const parsed = BodySchema.safeParse(await request.json());
     if (!parsed.success) return ok({ error: "Datos inválidos" }, { status: 400 });
 
-    const campaign = await prisma.campaign.findUnique({
-      where: { id },
+    const campaign = await prisma.campaign.findFirst({
+      where: { id, workspaceId: workspace.id },
       include: { steps: { orderBy: { order: "asc" } } },
     });
     if (!campaign) return ok({ error: "Campaña no encontrada" }, { status: 404 });
@@ -30,6 +30,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const step = parsed.data.stepId
       ? campaign.steps.find((s) => s.id === parsed.data.stepId)
       : campaign.steps.find((s) => s.type === "email");
+
+    if (!step || step.type !== "email") return fail("Selecciona un paso de email válido");
 
     const leads = await prisma.lead.findMany({
       where: { id: { in: parsed.data.leadIds }, workspaceId: workspace.id },
@@ -42,7 +44,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       const generated = await generateEmailMessage(ctx, {
         subjectTemplate: step?.subject,
         bodyTemplate: step?.body,
-        stepName: step?.name ?? undefined,
+        stepName: step.name ?? undefined,
+        aiEnabled: campaign.aiPersonalize && step.aiEnabled,
       });
       messages.push({
         leadId: lead.id,

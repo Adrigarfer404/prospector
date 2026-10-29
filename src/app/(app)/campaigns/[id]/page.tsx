@@ -21,6 +21,7 @@ import type {
   ListDTO,
   PreviewMessage,
   RunSummary,
+  RecipientDTO,
   StepType,
 } from "@/components/types";
 import {
@@ -109,6 +110,7 @@ export default function CampaignDetailPage() {
 
   const [summary, setSummary] = useState<RunSummary | null>(null);
   const [forceRun, setForceRun] = useState(false);
+  const [recovery, setRecovery] = useState<RecipientDTO | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -181,6 +183,16 @@ export default function CampaignDetailPage() {
       setSummary(response);
       await load();
     });
+
+  const resolveRecovery = (outcome: "sent" | "not_sent") => {
+    if (!recovery) return;
+    void runAction(async () => {
+      await apiSend(`/api/campaigns/${campaignId}/recipients/${recovery.id}/recover`, "POST", { outcome });
+      setRecovery(null);
+      setNotice(outcome === "sent" ? "Envío confirmado; la secuencia puede continuar." : "Envío marcado como no realizado; queda pendiente para el próximo intento.");
+      await load();
+    });
+  };
 
   const saveStep = async () => {
     if (!editingStepId || !stepDraft) return;
@@ -318,7 +330,7 @@ export default function CampaignDetailPage() {
   const sentCount = recipients.filter((recipient) => recipient.status === "sent").length;
   const repliedCount = recipients.filter((recipient) => recipient.status === "replied").length;
   const pendingCount = recipients.filter(
-    (recipient) => recipient.status === "pending" || recipient.status === "sending",
+    (recipient) => recipient.status === "pending" || recipient.status === "sending" || recipient.status === "manual",
   ).length;
 
   return (
@@ -748,6 +760,11 @@ export default function CampaignDetailPage() {
                       {recipient.error ? (
                         <div className="mt-1 text-xs text-red-600">{recipient.error}</div>
                       ) : null}
+                      {recipient.status === "sending" && Date.now() - new Date(recipient.updatedAt).getTime() >= 15 * 60 * 1000 ? (
+                        <div className="mt-1">
+                          <Button variant="secondary" onClick={() => setRecovery(recipient)}>Revisar envío</Button>
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-3 py-2.5 text-slate-600">
                       {Math.min(recipient.currentStep + 1, Math.max(steps.length, 1))} de{" "}
@@ -764,6 +781,30 @@ export default function CampaignDetailPage() {
           </div>
         )}
       </Card>
+
+      <Modal
+        open={Boolean(recovery)}
+        title="Revisar envío interrumpido"
+        description="Antes de continuar, asegúrate de que la ejecución se ha detenido y comprueba en tu correo o proveedor SMTP si el mensaje llegó a enviarse."
+        onClose={() => setRecovery(null)}
+        footer={<>
+          <Button variant="ghost" onClick={() => setRecovery(null)}>Cancelar</Button>
+          <Button variant="secondary" disabled={busy || campaign.status !== "paused"} onClick={() => resolveRecovery("not_sent")}>No se envió</Button>
+          <Button variant="primary" disabled={busy || campaign.status !== "paused"} onClick={() => resolveRecovery("sent")}>Sí se envió</Button>
+        </>}
+      >
+        <div className="space-y-3 text-sm text-slate-700">
+          <p>Destinatario: <strong>{recovery?.lead.fullName || recovery?.lead.email}</strong></p>
+          <p>Si confirmas que se envió, la secuencia avanzará y se anotará la confirmación. Si no se envió, quedará pendiente para otro intento.</p>
+          {recovery?.deliveryAttempt ? <div className="rounded border border-slate-200 p-3">
+            <p><strong>Asunto:</strong> {recovery.deliveryAttempt.subject || "Sin asunto"}</p>
+            <p><strong>Identificador:</strong> {recovery.deliveryAttempt.externalId || "No disponible"}</p>
+            <p><strong>Preparado:</strong> {formatDateTime(recovery.deliveryAttempt.createdAt)}</p>
+            <p className="mt-2 whitespace-pre-wrap">{recovery.deliveryAttempt.body}</p>
+          </div> : <p>No se conservó el contenido de este intento.</p>}
+          {campaign.status !== "paused" ? <NoticeBox message="Pausa la campaña antes de resolver este envío." /> : null}
+        </div>
+      </Modal>
 
       <Modal
         open={addLeadsOpen}
@@ -848,10 +889,10 @@ export default function CampaignDetailPage() {
           <Field label="Paso">
             <Select
               value={previewStepId}
-              onChange={setPreviewStepId}
+              onChange={(value) => { setPreviewStepId(value); setPreviewMessages(null); }}
               options={[
                 { value: "", label: "Primer paso de email" },
-                ...steps.map((step) => ({
+                ...steps.filter((step) => step.type === "email").map((step) => ({
                   value: step.id,
                   label: `${step.order + 1}. ${step.name || stepTypeLabel(step.type)}`,
                 })),
@@ -861,7 +902,7 @@ export default function CampaignDetailPage() {
 
           {previewMessages === null ? (
             <p className="text-sm text-slate-500">
-              Pulsa &quot;Generar vista previa&quot; para ver los mensajes tal y como se enviarán.
+              Genera una muestra para revisar el contenido. Si el paso usa IA, el mensaje se genera de nuevo al ejecutar la campaña y puede variar.
             </p>
           ) : previewMessages.length === 0 ? (
             <p className="text-sm text-slate-500">
@@ -869,6 +910,7 @@ export default function CampaignDetailPage() {
             </p>
           ) : (
             <div className="space-y-3">
+              <p className="text-sm text-slate-500">Las muestras generadas con IA pueden variar al ejecutar la campaña.</p>
               {previewMessages.map((message) => (
                 <div key={message.leadId} className="rounded-lg border border-slate-200 p-3">
                   <div className="flex flex-wrap items-center gap-2">

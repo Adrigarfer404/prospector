@@ -3,8 +3,8 @@
  *   1) npm run dev
  *   2) npx tsx scripts/test-e2e.ts
  *
- * Recorre el flujo real: listas -> campaña -> destinatarios -> ejecución con
- * IA -> inbox (respuesta) -> export CSV.
+ * Comprueba consultas y exportación sin modificar datos ni crear respuestas
+ * simuladas. Los flujos de envío aislados se prueban con npm run test:delivery.
  */
 
 const BASE = process.env.E2E_BASE ?? "http://localhost:3000";
@@ -78,182 +78,20 @@ async function main() {
     return;
   }
 
-  // 4) Lista + alta masiva
-  const list = await api<{ list: { id: string; name: string } }>("/api/lists", {
-    method: "POST",
-    body: { name: `E2E ${new Date().toISOString().slice(11, 19)}`, icp: "prueba" },
-  });
-  const assign = await api<{ added: number }>("/api/leads/assign-list", {
-    method: "POST",
-    body: {
-      leadIds: withEmail.slice(0, 3).map((l) => l.id),
-      listId: list.list.id,
-      add: true,
-    },
-  });
-  check("Alta masiva en lista", assign.added === 3, `${assign.added} leads añadidos`);
-
-  const listDetail = await api<{ leads: Json[] }>(`/api/lists/${list.list.id}`);
-  check(
-    "Lista contiene los leads",
-    listDetail.leads.length === 3,
-    `${listDetail.leads.length} leads en la lista`,
-  );
-
-  // 5) Campaña con 3 pasos
-  const campaign = await api<{ campaign: { id: string; name: string } }>("/api/campaigns", {
-    method: "POST",
-    body: {
-      name: `E2E campaña ${new Date().toISOString().slice(11, 19)}`,
-      channel: "mixed",
-      autoSend: false,
-      steps: [
-        {
-          type: "email",
-          name: "Primer email",
-          delayDays: 0,
-          aiEnabled: true,
-          subject: "Agenda online para {{company}}",
-          body: "Hola {{firstName}},\n\n{{ourValue}}.\n\n{{cta}}\n\n{{signature}}",
-        },
-        { type: "linkedin_connect", name: "Conexión", delayDays: 1, aiEnabled: true },
-        { type: "call", name: "Llamada", delayDays: 2 },
-      ],
-    },
-  });
-  check("Campaña creada con 3 pasos", Boolean(campaign.campaign.id), campaign.campaign.name);
-
-  // 6) Destinatarios
-  const recipients = await api<{ added: number }>(
-    `/api/campaigns/${campaign.campaign.id}/recipients`,
-    {
-      method: "POST",
-      body: { leadIds: withEmail.slice(0, 3).map((l) => l.id) },
-    },
-  );
-  check("Destinatarios añadidos", recipients.added === 3, `${recipients.added} destinatarios`);
-
-  // 7) Vista previa con IA
-  const preview = await api<{ messages: { subject: string; body: string; source: string }[] }>(
-    `/api/campaigns/${campaign.campaign.id}/preview`,
-    {
-      method: "POST",
-      body: { leadIds: withEmail.slice(0, 3).map((l) => l.id) },
-    },
-  );
-  const first = preview.messages?.[0];
-  check(
-    "Mensajes generados por IA",
-    Boolean(first?.body && first.body.length > 60),
-    first
-      ? `fuente=${first.source} · "${first.subject}" · ${first.body.length} chars`
-      : "sin mensajes",
-  );
-
-  // 8) Activar y ejecutar
-  await api(`/api/campaigns/${campaign.campaign.id}`, {
-    method: "POST",
-    body: { action: "launch" },
-  });
-  const run = await api<{
-    processed: number;
-    sent: number;
-    queued: number;
-    messages: { leadName: string; body: string }[];
-  }>(`/api/campaigns/${campaign.campaign.id}`, {
-    method: "POST",
-    body: { limit: 3, force: true },
-  });
-  check(
-    "Campaña ejecutada",
-    run.processed > 0,
-    `procesados=${run.processed} enviados=${run.sent} encolados=${run.queued}`,
-  );
-
-  // 9) Tareas generadas (LinkedIn / llamada)
-  const tasks = await api<{ tasks: Json[] }>("/api/tasks");
-  check("Tareas manuales generadas", tasks.tasks.length > 0, `${tasks.tasks.length} tareas`);
-
-  // 10) Inbox: registrar respuesta
-  const reply = await api<{ conversation: { id: string } }>("/api/inbox", {
-    method: "POST",
-    body: {
-      leadId: withEmail[0].id,
-      subject: "Re: Agenda online",
-      body: "Hola, sí me interesa. ¿Me enseñas el jueves?",
-      campaignId: campaign.campaign.id,
-    },
-  });
-  check("Respuesta registrada", Boolean(reply.conversation?.id), reply.conversation?.id);
-
-  const inbox = await api<{ conversations: Json[]; unreadCount: number }>("/api/inbox");
-  check(
-    "Inbox muestra la respuesta",
-    inbox.conversations.some((c) => c.direction === "inbound"),
-    `${inbox.conversations.length} conversaciones, ${inbox.unreadCount} sin leer`,
-  );
-
-  // 11) Export CSV
+  const [lists, campaigns, inbox] = await Promise.all([
+    api<{ lists: Json[] }>("/api/lists"),
+    api<{ campaigns: Json[] }>("/api/campaigns"),
+    api<{ conversations: Json[] }>("/api/inbox"),
+  ]);
+  check("Listas responden", Array.isArray(lists.lists), `${lists.lists.length} listas`);
+  check("Campañas responden", Array.isArray(campaigns.campaigns), `${campaigns.campaigns.length} campañas`);
+  check("Inbox responde", Array.isArray(inbox.conversations), `${inbox.conversations.length} conversaciones`);
   const csv = await fetch(`${BASE}/api/export/leads`);
-  const csvText = await csv.text();
-  const lines = csvText.trim().split("\n");
-  check(
-    "Export CSV",
-    csv.ok && lines.length > 1 && lines[0].includes("email"),
-    `${lines.length - 1} filas · cabecera: ${lines[0].slice(0, 60)}`,
-  );
-
-  const failed = results.filter((r) => !r.ok);
+  const lines = (await csv.text()).trim().split("\n");
+  check("Export CSV", csv.ok && lines[0].includes("email"), `${Math.max(0, lines.length - 1)} filas`);
+  const failed = results.filter(r => !r.ok);
   console.log(`\n=== ${results.length - failed.length}/${results.length} checks PASS ===`);
-
-  // Limpieza: la prueba no debe dejar basura en la base de datos de trabajo.
-  // Se borran la lista, la campaña, sus destinatarios y las conversaciones
-  // creadas, y los leads añadidos vuelven a su estado anterior.
-  await cleanup();
-
-  if (failed.length) {
-    console.log("Fallos:", failed.map((f) => f.name).join(", "));
-    process.exit(1);
-  }
+  if (failed.length) process.exitCode = 1;
 }
 
-/** Borra lo que ha creado esta ejecución del test. */
-async function cleanup() {
-  try {
-    const { prisma } = await import("../src/lib/db");
-    const lists = await prisma.list.findMany({ where: { name: { startsWith: "E2E" } } });
-    for (const list of lists) {
-      await prisma.listItem.deleteMany({ where: { listId: list.id } });
-      await prisma.list.delete({ where: { id: list.id } });
-    }
-    const campaigns = await prisma.campaign.findMany({
-      where: { name: { startsWith: "E2E" } },
-    });
-    for (const campaign of campaigns) {
-      await prisma.conversation.deleteMany({ where: { campaignId: campaign.id } });
-      await prisma.campaignRecipient.deleteMany({ where: { campaignId: campaign.id } });
-      await prisma.campaignStep.deleteMany({ where: { campaignId: campaign.id } });
-      await prisma.campaign.delete({ where: { id: campaign.id } });
-    }
-    // Conversaciones sueltas creadas por la prueba (las que no son de campaña).
-    await prisma.conversation.deleteMany({
-      where: { body: { contains: "me enseñas el jueves" } },
-    });
-    if (lists.length || campaigns.length) {
-      console.log(
-        `Limpieza: ${lists.length} lista(s) y ${campaigns.length} campaña(s) de prueba borradas.`,
-      );
-    }
-    await prisma.$disconnect();
-  } catch (err) {
-    console.warn(
-      "No se pudo limpiar del todo:",
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-}
-
-main().catch((err) => {
-  console.error("E2E falló:", err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+main().catch(err => { console.error("Error:", err); process.exitCode = 1; });

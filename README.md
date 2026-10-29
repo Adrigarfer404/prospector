@@ -217,6 +217,11 @@ Marca la identidad como **por defecto**. Con eso, la campaña envía de verdad.
 Antes de activar una campaña con envío automático, revisa siempre la
 **vista previa de mensajes**: la IA los redacta, pero tú decides.
 
+Si la conexión se corta durante un envío, su resultado puede ser desconocido.
+La aplicación conserva el contenido y el identificador del mensaje y no lo
+reenvía automáticamente. Comprueba el proveedor SMTP y revisa el intento en la
+campaña pausada o en Inbox antes de confirmar si se envió.
+
 ---
 
 ## Cambiar de modelo de IA (Claude, OpenRouter, cualquier API)
@@ -430,8 +435,9 @@ npm run seed -- --queries "fisioterapia en Madrid" --limit 30 --enrich 10
 npm run test:finder -- "dentistas en Sevilla"   # AI Finder contra la web real
 npm run test:providers                          # discovery + crawl + SMTP + LLM
 npm run test:messages                           # redacción de emails con IA
+npm run test:delivery                           # SMTP simulado y SQLite temporal, sin correos reales
 npm run test:crawl -- https://clinicaelviso.es  # extracción de contactos de una web
-npm run test:e2e                                # flujo completo contra la API (con npm run dev)
+npm run test:e2e                                # consultas y exportación sin modificar datos (con npm run dev)
 
 npm run cleanup                                 # limpia duplicados y leads inservibles
 npm run cleanup -- --dry                        # sólo informa
@@ -447,9 +453,7 @@ Y el cron local para el barrido diario (a las 7:15, hora peninsular):
 15 7 * * * cd /ruta/al/proyecto && npm run sweep -- --cells 5 --enrich >> /tmp/sweep.log 2>&1
 ```
 
-`npm run test:e2e` recorre: analítica → playbook → leads con email → alta en
-lista → campaña de 3 pasos → destinatarios → vista previa con IA → ejecución →
-tareas manuales → respuesta en inbox → export CSV.
+`npm run test:e2e` comprueba consultas y exportación sin crear conversaciones ni modificar leads. Para probar envíos y recuperación de forma aislada, usa `npm run test:delivery`.
 
 ---
 

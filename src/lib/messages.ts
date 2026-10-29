@@ -149,10 +149,10 @@ export function buildVariables(ctx: MessageContext): TemplateVars {
   };
 }
 
-const SYSTEM_PROMPT = `Eres un vendedor B2B experto en español que escribe emails de prospección en frío a PROFESIONALES AUTÓNOMOS E INDEPENDIENTES del sector salud en España (fisioterapeutas,营养师, dentistas,está aquí, Degree...). Tu destinatario NO es una empresa: es una persona que trabaja por su cuenta, atiende a sus pacientes y gestiona sus citas él mismo.
+const SYSTEM_PROMPT = `Eres un vendedor B2B experto en español que escribe emails de prospección en frío a PROFESIONALES AUTÓNOMOS E INDEPENDIENTES del sector salud en España (fisioterapeutas, nutricionistas, dentistas y psicólogos). Tu destinatario NO es una empresa: es una persona que trabaja por su cuenta, atiende a sus pacientes y gestiona sus citas él mismo.
 
 Reglas estrictas:
-- Habla de SU día a día: la agenda con huecos, los recordatorios que tiene que mandar a mano, los pacientes que no se presentan, los cobros que se pierden, el tiempo que le roba Reception administration.
+- Habla de SU día a día: la agenda con huecos, los recordatorios que tiene que mandar a mano, los pacientes que no se presentan, los cobros que se pierden, el tiempo que le roba administración.
 - NO hables de "tu equipo", "tu personal", "tus clínicas", "vuestra empresa" ni de gestión de personal: es un profesional solo. Usa "tu consulta", "tus pacientes", "cuando atiendes".
 - Trátale de tú y con respeto de igual a igual: es un profesional, no un empleado.
 - Responde SIEMPRE en español de España, tono natural y respetuoso, como un colega que entiende el día a día del negocio.
@@ -178,8 +178,8 @@ function fallbackMessage(ctx: MessageContext, vars: TemplateVars): GeneratedMess
   const body = [
     greeting,
     "",
-    `Te escribo porque ${vars.company ? `${vars.company} ` : "tu clínica "}gestiona las citas de forma manual y eso suele comerse bastante tiempo al día.`,
-    `En ${vars.ourCompany} puedes montar un sistema de reservas en ${vars.cta ? vars.cta : "minutos"}: agenda pública, recordatorios automáticos y el historial de cada paciente en el mismo sitio.`,
+    `Te escribo para presentarte una forma de simplificar la gestión de citas.`,
+    `En ${vars.ourCompany} puedes ${value}.`,
     vars.cta ? `Si te interesa, ${vars.cta}` : `Si te interesa, te enseño cómo funciona en 10 minutos.`,
     "",
     vars.signature,
@@ -191,11 +191,11 @@ function fallbackMessage(ctx: MessageContext, vars: TemplateVars): GeneratedMess
 
 export async function generateEmailMessage(
   ctx: MessageContext,
-  opts?: { subjectTemplate?: string | null; bodyTemplate?: string | null; stepName?: string | null },
+  opts?: { subjectTemplate?: string | null; bodyTemplate?: string | null; stepName?: string | null; aiEnabled?: boolean },
 ): Promise<GeneratedMessage> {
   const vars = buildVariables(ctx);
 
-  {
+  if (opts?.aiEnabled !== false) {
     const facts = [
       `Destinatario: ${ctx.lead.fullName ?? "(desconocido)"}${ctx.lead.jobTitle ? ` — ${ctx.lead.jobTitle}` : ""}`,
       ctx.company?.name ? `Empresa: ${ctx.company.name}` : null,
@@ -209,6 +209,8 @@ export async function generateEmailMessage(
       vars.cta ? `CTA sugerido: ${vars.cta}` : null,
       `Tono: ${vars.tone}`,
       opts?.stepName ? `Tipo de paso de la secuencia: ${opts.stepName}` : null,
+      opts?.subjectTemplate ? `Asunto de referencia: ${renderTemplate(opts.subjectTemplate, vars)}` : null,
+      opts?.bodyTemplate ? `Borrador de referencia: ${renderTemplate(opts.bodyTemplate, vars)}` : null,
     ]
       .filter(Boolean)
       .join("\n");
@@ -222,7 +224,7 @@ export async function generateEmailMessage(
         { role: "system", content: SYSTEM_PROMPT },
         {
           role: "user",
-          content: `Genera un email de prospección en frío.\n\n${facts}\n\nDevuelve JSON: {"subject": string, "body": string, "rationale": string}`,
+          content: `Genera un email de prospección en frío. Usa el asunto y borrador de referencia si existen, pero elimina las afirmaciones sobre el destinatario que no estén verificadas en los datos. No inventes hechos.\n\n${facts}\n\nDevuelve JSON: {"subject": string, "body": string, "rationale": string}`,
         },
       ],
     );
@@ -242,20 +244,21 @@ export async function generateEmailMessage(
   return fallback;
 }
 
-export async function generateLinkedInMessage(ctx: MessageContext): Promise<string> {
+export async function generateLinkedInMessage(ctx: MessageContext, opts?: { aiEnabled?: boolean; bodyTemplate?: string | null }): Promise<string> {
   const vars = buildVariables(ctx);
-  {
+  if (opts?.aiEnabled !== false) {
     const parsed = await llmCompleteJson<{ message?: string }>([
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "user",
-        content: `Genera un mensaje de LinkedIn (NOTA de conexión o primer mensaje, máximo 300 caracteres, en español, sin emojis, sin enlaces).\n\nDestinatario: ${ctx.lead.fullName ?? "(desconocero)"}${ctx.lead.jobTitle ? `, ${ctx.lead.jobTitle}` : ""}${ctx.company?.name ? `, en ${ctx.company.name}` : ""}\nNuestro producto: ${vars.ourCompany} — ${vars.ourOffer || vars.ourValue}\nTono: ${vars.tone}\n\nDevuelve JSON: {"message": string}`,
+        content: `Genera un mensaje de LinkedIn (NOTA de conexión o primer mensaje, máximo 300 caracteres, en español, sin emojis, sin enlaces).\n\nDestinatario: ${ctx.lead.fullName ?? "(desconocido)"}${ctx.lead.jobTitle ? `, ${ctx.lead.jobTitle}` : ""}${ctx.company?.name ? `, en ${ctx.company.name}` : ""}\nNuestro producto: ${vars.ourCompany} — ${vars.ourOffer || vars.ourValue}\nTono: ${vars.tone}${opts?.bodyTemplate ? `\nBorrador de referencia: ${renderTemplate(opts.bodyTemplate, vars)}` : ""}\nNo afirmes hechos que no estén verificados.\n\nDevuelve JSON: {"message": string}`,
       },
     ]);
     if (parsed?.message?.trim()) return parsed.message.trim();
   }
+  if (opts?.bodyTemplate) return renderTemplate(opts.bodyTemplate, vars);
   const who = ctx.lead.firstName ?? "";
-  return `${who ? `${who}, ` : ""}veo que ${ctx.company?.name ?? "tu clínica"} gestiona las citas a mano. En ${vars.ourCompany} montamos agenda online con recordatorios automáticos. ¿Te lo enseño en 2 min?`;
+  return `${who ? `${who}, ` : ""}te escribo para presentarte ${vars.ourCompany} y su agenda online. ¿Te enseño cómo funciona?`;
 }
 
 export async function generateResearchSummary(ctx: MessageContext): Promise<string | null> {

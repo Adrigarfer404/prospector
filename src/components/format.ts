@@ -40,7 +40,8 @@ export function campaignStatusLabel(status: string): string {
 const RECIPIENT_STATUS_LABELS: Record<string, string> = {
   pending: "Pendiente",
   sending: "Enviando",
-  sent: "Enviado",
+  manual: "Pendiente de acción manual",
+  sent: "Secuencia completada",
   replied: "Respondió",
   failed: "Error",
   booked: "Agendado",

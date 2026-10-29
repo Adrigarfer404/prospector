@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { ok, serverError } from "@/lib/api";
 import { getWorkspace } from "@/lib/workspace";
@@ -80,16 +81,20 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       return ok({ added: 0, message: "No hay leads que añadir" });
     }
 
+    const campaign = await prisma.campaign.findFirst({ where: { id, workspaceId: workspace.id }, select: { id: true } });
+    if (!campaign) return ok({ error: "Campaña no encontrada" }, { status: 404 });
     let added = 0;
-    for (const leadId of leadIds) {
+    for (const leadId of new Set(leadIds)) {
       const lead = await prisma.lead.findFirst({ where: { id: leadId, workspaceId: workspace.id } });
       if (!lead) continue;
-      const res = await prisma.campaignRecipient.upsert({
-        where: { campaignId_leadId: { campaignId: id, leadId } },
-        update: {},
-        create: { campaignId: id, leadId },
-      });
-      if (res) added += 1;
+      const existing = await prisma.campaignRecipient.findUnique({ where: { campaignId_leadId: { campaignId: id, leadId } }, select: { id: true } });
+      if (existing) continue;
+      try {
+        await prisma.campaignRecipient.create({ data: { campaignId: id, leadId } });
+        added += 1;
+      } catch (err) {
+        if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") throw err;
+      }
     }
 
     return ok({ added, total: leadIds.length });
