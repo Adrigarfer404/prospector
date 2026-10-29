@@ -178,8 +178,8 @@ function fallbackMessage(ctx: MessageContext, vars: TemplateVars): GeneratedMess
   const body = [
     greeting,
     "",
-    `Te escribo porque ${vars.company ? `${vars.company} ` : "tu clínica "}gestiona las citas de forma manual y eso suele comerse bastante tiempo al día.`,
-    `En ${vars.ourCompany} puedes montar un sistema de reservas en ${vars.cta ? vars.cta : "minutos"}: agenda pública, recordatorios automáticos y el historial de cada paciente en el mismo sitio.`,
+    `Te escribo para presentarte una forma de simplificar la gestión de citas.`,
+    `En ${vars.ourCompany} puedes ${value}.`,
     vars.cta ? `Si te interesa, ${vars.cta}` : `Si te interesa, te enseño cómo funciona en 10 minutos.`,
     "",
     vars.signature,
@@ -255,7 +255,7 @@ export async function generateLinkedInMessage(ctx: MessageContext): Promise<stri
     if (parsed?.message?.trim()) return parsed.message.trim();
   }
   const who = ctx.lead.firstName ?? "";
-  return `${who ? `${who}, ` : ""}veo que ${ctx.company?.name ?? "tu clínica"} gestiona las citas a mano. En ${vars.ourCompany} montamos agenda online con recordatorios automáticos. ¿Te lo enseño en 2 min?`;
+  return `${who ? `${who}, ` : ""}te escribo para presentarte ${vars.ourCompany} y su agenda online. ¿Te enseño cómo funciona?`;
 }
 
 export async function generateResearchSummary(ctx: MessageContext): Promise<string | null> {

@@ -5,7 +5,8 @@ import { getWorkspace } from "@/lib/workspace";
 export const runtime = "nodejs";
 
 function csvCell(value: unknown): string {
-  const s = value === null || value === undefined ? "" : String(value);
+  let s = value === null || value === undefined ? "" : String(value);
+  if (/^[\s\x00-\x1f]*[=+@-]/.test(s)) s = `'${s}`;
   if (/[",\n;]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }

@@ -28,7 +28,7 @@ function keyOf(cfg: SmtpConfig) {
   // El modo de cifrado también entra en la clave: si el usuario prueba con
   // STARTTLS y luego guarda con SSL directo, no debe reutilizarse el
   // trasportador antiguo.
-  return `${cfg.host}:${cfg.port}:${cfg.user ?? ""}:${cfg.secure ?? cfg.port === 465 ? "ssl" : "starttls"}`;
+  return JSON.stringify([cfg.host, cfg.port, cfg.user, cfg.pass, cfg.secure ?? cfg.port === 465]);
 }
 
 export function getTransporter(cfg: SmtpConfig): Transporter {
