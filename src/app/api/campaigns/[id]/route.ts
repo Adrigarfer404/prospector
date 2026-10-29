@@ -51,6 +51,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
           lastSentAt: r.lastSentAt,
           repliedAt: r.repliedAt,
           error: r.error,
+          updatedAt: r.updatedAt,
           lead: r.lead,
         })),
       },

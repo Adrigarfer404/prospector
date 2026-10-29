@@ -5,6 +5,8 @@ import { runCampaign, registerReply } from "../src/lib/campaigns";
 import { isContactBlocked } from "../src/lib/contact-policy";
 import { getTransporter } from "../src/lib/emailer";
 import { fetchPage } from "../src/lib/providers/enrichment/website";
+import { POST as recover } from "../src/app/api/campaigns/[id]/recipients/[recipientId]/recover/route";
+import { POST as addRecipients } from "../src/app/api/campaigns/[id]/recipients/route";
 import { PATCH } from "../src/app/api/inbox/[id]/route";
 
 async function main() {
@@ -24,8 +26,27 @@ async function main() {
   assert.equal(recipient.currentStep, 1);
   assert.equal(recipient.status, "pending");
   assert.equal((await runCampaign(workspace.id, campaign.id)).queued, 0);
+  const addResponse = await addRecipients(new Request("http://localhost", { method: "POST", body: JSON.stringify({ leadIds: [lead.id, lead.id] }) }), { params: Promise.resolve({ id: campaign.id }) });
+  assert.equal((await addResponse.json()).added, 0);
   await registerReply({ workspaceId: workspace.id, leadId: lead.id, body: "Gracias" });
   assert.equal((await prisma.campaignRecipient.findUniqueOrThrow({ where: { id: recipient.id } })).status, "replied");
+  const interrupted = await prisma.campaign.create({ data: { workspaceId: workspace.id, name: "interrumpida", status: "paused", steps: { create: [{ order: 0, type: "email" }, { order: 1, type: "email" }] }, recipients: { create: { leadId: lead.id, status: "sending", updatedAt: new Date(Date.now() - 20 * 60 * 1000) } } }, include: { recipients: true } });
+  const recoveryParams = { params: Promise.resolve({ id: interrupted.id, recipientId: interrupted.recipients[0].id }) };
+  const recoverRequest = (outcome: string) => new Request("http://localhost", { method: "POST", body: JSON.stringify({ outcome }) });
+  await prisma.campaign.update({ where: { id: interrupted.id }, data: { status: "active" } });
+  assert.equal((await recover(recoverRequest("sent"), recoveryParams)).status, 409);
+  await prisma.campaign.update({ where: { id: interrupted.id }, data: { status: "paused" } });
+  assert.equal((await recover(recoverRequest("sent"), recoveryParams)).status, 200);
+  const recovered = await prisma.campaignRecipient.findUniqueOrThrow({ where: { id: interrupted.recipients[0].id } });
+  assert.equal(recovered.status, "pending");
+  assert.equal(recovered.currentStep, 1);
+  assert.equal((await recover(recoverRequest("sent"), recoveryParams)).status, 409);
+  assert.equal(await prisma.conversation.count({ where: { campaignId: interrupted.id } }), 1);
+  await prisma.campaignRecipient.update({ where: { id: recovered.id }, data: { status: "sending" } });
+  assert.equal((await recover(recoverRequest("not_sent"), recoveryParams)).status, 409);
+  await prisma.campaignRecipient.update({ where: { id: recovered.id }, data: { updatedAt: new Date(Date.now() - 20 * 60 * 1000) } });
+  assert.equal((await recover(recoverRequest("not_sent"), recoveryParams)).status, 200);
+  assert.equal((await prisma.campaignRecipient.findUniqueOrThrow({ where: { id: recovered.id } })).currentStep, 1);
   await prisma.blocklistEntry.create({ data: { workspaceId: workspace.id, type: "domain", value: "EXAMPLE.COM" } });
   assert.ok(await isContactBlocked(workspace.id, lead));
   assert.ok(await isContactBlocked(workspace.id, { ...lead, status: "do_not_contact" }));
