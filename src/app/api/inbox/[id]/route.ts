@@ -16,10 +16,22 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const { id } = await context.params;
     const parsed = PatchSchema.safeParse(await request.json());
     if (!parsed.success) return fail("Datos inválidos");
-    const conversation = await prisma.conversation.update({
-      where: { id },
-      data: parsed.data,
+    const workspace = await getWorkspace();
+    const conversation = await prisma.$transaction(async (tx) => {
+      const existing = await tx.conversation.findFirst({ where: { id, workspaceId: workspace.id } });
+      if (!existing) return null;
+      const updated = await tx.conversation.update({ where: { id }, data: {
+        ...parsed.data,
+        ...(parsed.data.status === "closed" && existing.status !== "closed" && existing.direction === "outbound" ? { sentAt: new Date() } : {}),
+      } });
+      if (parsed.data.status === "closed" && existing.status !== "closed" && existing.direction === "outbound" && existing.campaignId && existing.leadId) {
+        const now = new Date();
+        await tx.campaignRecipient.updateMany({ where: { campaignId: existing.campaignId, leadId: existing.leadId, status: "manual" }, data: { status: "pending", currentStep: { increment: 1 }, sentCount: { increment: 1 }, lastSentAt: now, error: null } });
+        await tx.lead.updateMany({ where: { id: existing.leadId, status: { notIn: ["unsubscribed", "do_not_contact", "bounced", "replied"] } }, data: { status: "contacted", lastContactedAt: now } });
+      }
+      return updated;
     });
+    if (!conversation) return fail("Conversación no encontrada", 404);
     return ok({ conversation });
   } catch (err) {
     return serverError(err);

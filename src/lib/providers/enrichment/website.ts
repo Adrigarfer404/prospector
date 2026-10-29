@@ -7,6 +7,10 @@
  */
 
 import * as cheerio from "cheerio";
+import { lookup } from "node:dns/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { isIP } from "node:net";
 import * as iconv from "iconv-lite";
 import type { WebsiteContactResult, WebsiteCrawler } from "../contract";
 import { stripAccents } from "../../text";
@@ -287,25 +291,55 @@ function decodeBody(buffer: ArrayBuffer, contentType: string | null): string {
   return iconv.decode(bytes, label);
 }
 
-/** Descarga una página y devuelve el HTML decodificado. */
+/** Solo IPv4 públicas; los destinos IPv6 se rechazan por precaución. */
+function publicIPv4(address: string): boolean {
+  if (isIP(address) !== 4) return false;
+  const [a, b, c] = address.split(".").map(Number);
+  return !(a === 0 || a === 10 || a === 127 || a >= 224 ||
+    (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) || (a === 192 && (b === 168 || b === 0 || (b === 88 && c === 99))) ||
+    (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
+    (a === 203 && b === 0 && c === 113));
+}
+
+/** Descarga limitada con DNS fijado y validación en cada redirección. */
 export async function fetchPage(url: string): Promise<CrawledPage | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PAGE_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      redirect: "follow",
-      headers: {
-        "User-Agent": BROWSER_USER_AGENT,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-      },
-    });
-    if (!res.ok) return null;
-    const contentType = res.headers.get("content-type");
-    if (contentType && !/text\/html|application\/xhtml/i.test(contentType)) return null;
-    const buffer = await res.arrayBuffer();
-    return { url: res.url || url, html: decodeBody(buffer, contentType) };
+    for (let redirects = 0; redirects <= 5; redirects++) {
+      const target = new URL(url);
+      if (!["http:", "https:"].includes(target.protocol) || target.username || target.password) return null;
+      const addresses = await lookup(target.hostname, { all: true, family: 4 });
+      if (!addresses.length || addresses.some(a => !publicIPv4(a.address))) return null;
+      const address = addresses[0].address;
+      const result = await new Promise<{ status: number; location?: string; contentType?: string; bytes: Buffer }>((resolve, reject) => {
+        const request = (target.protocol === "https:" ? httpsRequest : httpRequest)(target, {
+          signal: controller.signal,
+          lookup: (_hostname, _options, callback) => callback(null, address, 4),
+          headers: { "User-Agent": BROWSER_USER_AGENT, Accept: "text/html,application/xhtml+xml", "Accept-Language": "es-ES,es;q=0.9,en;q=0.8" },
+        }, response => {
+          const chunks: Buffer[] = [];
+          let size = 0;
+          response.on("data", (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > 2_000_000) { response.destroy(new Error("Página demasiado grande")); return; }
+            chunks.push(chunk);
+          });
+          response.on("error", reject);
+          response.on("end", () => resolve({ status: response.statusCode ?? 0, location: response.headers.location, contentType: response.headers["content-type"], bytes: Buffer.concat(chunks) }));
+        });
+        request.on("error", reject);
+        request.end();
+      });
+      if (result.status >= 300 && result.status < 400 && result.location) {
+        url = new URL(result.location, target).toString();
+        continue;
+      }
+      if (result.status < 200 || result.status >= 300 || (result.contentType && !/text\/html|application\/xhtml/i.test(result.contentType))) return null;
+      return { url: target.toString(), html: decodeBody(Uint8Array.from(result.bytes).buffer, result.contentType ?? null) };
+    }
+    return null;
   } catch {
     return null;
   } finally {

@@ -3,6 +3,7 @@ import { logActivity } from "./workspace";
 import { sendEmail } from "./emailer";
 import { generateEmailMessage, generateLinkedInMessage, type MessageContext } from "./messages";
 import { parseJson } from "./types";
+import { isContactBlocked } from "./contact-policy";
 
 /**
  * Motor de secuencias multicanal. Cada paso puede ser email (envío real por
@@ -112,260 +113,157 @@ export async function runCampaign(
   campaignId: string,
   options?: { limit?: number; force?: boolean },
 ): Promise<RunSummary> {
-  const summary: RunSummary = {
-    processed: 0,
-    sent: 0,
-    queued: 0,
-    skipped: 0,
-    failed: 0,
-    messages: [],
-    errors: [],
-  };
-
-  const campaign = await prisma.campaign.findUnique({
-    where: { id: campaignId },
-    include: {
-      steps: { orderBy: { order: "asc" } },
-    },
+  const summary: RunSummary = { processed: 0, sent: 0, queued: 0, skipped: 0, failed: 0, messages: [], errors: [] };
+  const campaign = await prisma.campaign.findFirst({
+    where: { id: campaignId, workspaceId },
+    include: { steps: { orderBy: { order: "asc" } } },
   });
-  if (!campaign) {
-    summary.errors.push("Campaña no encontrada");
+  if (!campaign || (campaign.status !== "active" && !options?.force)) {
+    summary.errors.push(campaign ? "La campaña no está activa" : "Campaña no encontrada");
     return summary;
   }
-  if (campaign.status !== "active" && !options?.force) {
-    summary.errors.push("La campaña no está activa");
-    return summary;
-  }
-
-  const identity = await prisma.identity.findFirst({
-    where: { workspaceId, isDefault: true },
-  });
-  const smtp = identity?.smtpHost
-    ? {
-        host: identity.smtpHost,
-        port: identity.smtpPort ?? 587,
-        user: identity.smtpUser,
-        pass: identity.smtpPass,
-        secure: identity.smtpSecure,
-      }
-    : null;
-
+  const identity = await prisma.identity.findFirst({ where: { workspaceId, isDefault: true } });
+  const smtp = identity?.smtpHost ? {
+    host: identity.smtpHost, port: identity.smtpPort ?? 587,
+    user: identity.smtpUser, pass: identity.smtpPass, secure: identity.smtpSecure,
+  } : null;
+  // Los registros antiguos en estado sent con pasos pendientes también se recuperan.
+  await prisma.campaignRecipient.updateMany({ where: { campaignId, status: "sent", currentStep: { lt: campaign.steps.length } }, data: { status: "pending" } });
   const recipients = await prisma.campaignRecipient.findMany({
-    where: { campaignId, status: { in: ["pending", "sending"] } },
-    include: { lead: true },
-    take: options?.limit ?? 50,
-    orderBy: { createdAt: "asc" },
+    where: { campaignId, status: "pending" },
+    include: { lead: true }, orderBy: { createdAt: "asc" },
+    take: Math.max(1, Math.min(options?.limit ?? 50, 500)),
   });
-
-  const now = new Date();
-
   for (const recipient of recipients) {
+    // Una reserva condicional impide que dos ejecuciones procesen el mismo lead.
+    const claim = await prisma.$transaction(async (tx) => {
+      // El primer write serializa reservas y comprobaciones entre procesos SQLite.
+      await tx.workspace.update({ where: { id: workspaceId }, data: { updatedAt: new Date() } });
+      if (campaign.autoSend && identity && smtp) {
+        const start = new Date(); start.setHours(0, 0, 0, 0);
+        const [campaignSent, workspaceSent, campaignReserved, workspaceReserved, manualReserved] = await Promise.all([
+          tx.conversation.count({ where: { campaignId, channel: "email", direction: "outbound", sentAt: { gte: start } } }),
+          tx.conversation.count({ where: { workspaceId, channel: "email", direction: "outbound", sentAt: { gte: start } } }),
+          tx.campaignRecipient.count({ where: { campaignId, status: "sending" } }),
+          tx.campaignRecipient.count({ where: { campaign: { workspaceId }, status: "sending" } }),
+          tx.conversation.count({ where: { workspaceId, channel: "email", status: "sending" } }),
+        ]);
+        if (campaignSent + campaignReserved >= campaign.dailyLimit || workspaceSent + workspaceReserved + manualReserved >= identity.dailyLimit) return { count: 0 };
+      }
+      return tx.campaignRecipient.updateMany({
+        where: { id: recipient.id, status: recipient.status, currentStep: recipient.currentStep },
+        data: { status: "sending" },
+      });
+    });
+    if (!claim.count) continue;
     let currentStep = recipient.currentStep;
-    let lastSentAt = recipient.lastSentAt;
+    let anchor = recipient.lastSentAt ?? recipient.createdAt;
     let sentCount = recipient.sentCount;
-    let status = recipient.status;
-    // Espera acumulada: los pasos "wait" retrasan al paso siguiente.
-    let extraDelayHours = 0;
-
-    // Se avanzan TODOS los pasos que ya han vencido: un paso "wait" no
-    // consume el turno, así que encadenar email -> linkedin -> llamada en una
-    // sola ejecución tiene sentido.
-    for (;;) {
-    const step = campaign.steps[currentStep];
-    if (!step) {
-      if (status !== "skipped") {
-        await prisma.campaignRecipient.update({
-          where: { id: recipient.id },
-          data: { status: "skipped" },
-        });
-        summary.skipped += 1;
-      }
-      break;
-    }
-
-    if (
-      !options?.force &&
-      !(await stepDue(
-        {
-          currentStep,
-          lastSentAt: lastSentAt
-            ? new Date(lastSentAt.getTime() + extraDelayHours * 3_600_000)
-            : null,
-          createdAt: recipient.createdAt,
-        },
-        step,
-        now,
-      ))
-    ) {
-      break;
-    }
-
-    summary.processed += 1;
-
+    let lastSentAt = recipient.lastSentAt;
     try {
-      const ctx = await buildMessageContext(recipient.leadId);
-      if (!ctx) {
-        summary.skipped += 1;
+      const lead = await prisma.lead.findUniqueOrThrow({ where: { id: recipient.leadId } });
+      const blocked = await isContactBlocked(workspaceId, lead);
+      if (blocked) {
+        await prisma.campaignRecipient.updateMany({ where: { id: recipient.id, status: "sending" }, data: { status: "skipped", error: blocked } });
+        summary.skipped++;
         continue;
       }
-
-      const settings = parseJson<StepSettings>(step.settings, {});
-
-      if (step.type === "email") {
-        const message = await generateEmailMessage(ctx, {
-          subjectTemplate: step.subject,
-          bodyTemplate: step.body,
-          stepName: step.name,
-        });
-
-        let sent = false;
-        let error: string | undefined;
-
-        if (recipient.lead.email && identity && smtp && campaign.autoSend) {
-          const result = await sendEmail({
-            from: { name: identity.name, email: identity.email },
-            to: { name: recipient.lead.fullName, email: recipient.lead.email },
-            subject: message.subject,
-            body: message.body,
-            replyTo: identity.email,
-            smtp,
-          });
-          sent = result.sent;
-          error = result.error;
-        }
-
-        await prisma.conversation.create({
-          data: {
-            workspaceId,
-            leadId: recipient.leadId,
-            campaignId,
-            channel: "email",
-            direction: "outbound",
-            subject: message.subject,
-            body: message.body,
-            status: sent ? "closed" : "open",
-            sentAt: sent ? new Date() : null,
-          },
-        });
-
-        if (sent) {
-          summary.sent += 1;
-        } else {
-          summary.queued += 1;
-          if (error) summary.errors.push(`${recipient.lead.fullName ?? recipient.leadId}: ${error}`);
-        }
-
-        summary.messages.push({
-          leadName: recipient.lead.fullName ?? recipient.lead.email ?? recipient.leadId,
-          subject: message.subject,
-          body: message.body,
-          channel: "email",
-        });
-
-        await prisma.lead.update({
-          where: { id: recipient.leadId },
-          data: { status: "contacted", lastContactedAt: new Date() },
-        });
-      } else if (step.type === "linkedin_connect" || step.type === "linkedin_message") {
-        const message = await generateLinkedInMessage(ctx);
-        await prisma.conversation.create({
-          data: {
-            workspaceId,
-            leadId: recipient.leadId,
-            campaignId,
-            channel: "linkedin",
-            direction: "outbound",
-            subject:
-              step.type === "linkedin_connect" ? "Nota de conexión en LinkedIn" : "Mensaje en LinkedIn",
-            body: message,
-            status: "open",
-          },
-        });
-        summary.queued += 1;
-        summary.messages.push({
-          leadName: recipient.lead.fullName ?? recipient.leadId,
-          subject: `LinkedIn (${settings.linkedinAction ?? step.type})`,
-          body: message,
-          channel: "linkedin",
-        });
-      } else if (step.type === "call") {
-        const phone = recipient.lead.phoneNumber ?? "sin teléfono";
-        await prisma.conversation.create({
-          data: {
-            workspaceId,
-            leadId: recipient.leadId,
-            campaignId,
-            channel: "call",
-            direction: "outbound",
-            subject: `Llamar a ${recipient.lead.fullName ?? ""}`.trim(),
-            body: `Llamar al ${phone}. Guion sugerido:\n${
-              ctx.company?.name ? `Empresa: ${ctx.company.name}. ` : ""
-            }Presentar ${ctx.playbook.ourCompany} y ofrecer ${
-              ctx.playbook.ourValue ?? "gestión de citas online"
-            }.`,
-            status: "open",
-          },
-        });
-        summary.queued += 1;
-        summary.messages.push({
-          leadName: recipient.lead.fullName ?? recipient.leadId,
-          subject: `Llamada al ${phone}`,
-          body: `Llamada al ${phone}`,
-          channel: "call",
-        });
-      } else if (step.type === "wait") {
-        // La espera no produce contacto: acumula el retraso para el paso
-        // siguiente y avanza el puntero.
-        extraDelayHours += step.delayDays * 24 + step.delayHours;
-        currentStep += 1;
-        continue;
-      } else if (step.type === "condition") {
-        const condition = settings.condition;
-        const passed = evaluateCondition(condition, recipient.lead);
-        if (!passed) {
-          await prisma.campaignRecipient.update({
-            where: { id: recipient.id },
-            data: { status: "skipped" },
-          });
-          summary.skipped += 1;
-          status = "skipped";
+      for (;;) {
+        const step = campaign.steps[currentStep];
+        if (!step) {
+          await prisma.campaignRecipient.updateMany({ where: { id: recipient.id, status: "sending" }, data: { status: "sent", currentStep, error: null } });
           break;
         }
+        const delay = (step.delayDays * 24 + step.delayHours) * 3_600_000;
+        if (!options?.force && Date.now() < anchor.getTime() + delay) {
+          await prisma.campaignRecipient.updateMany({ where: { id: recipient.id, status: "sending" }, data: { status: "pending", currentStep, lastSentAt } });
+          break;
+        }
+        const stillClaimed = await prisma.campaignRecipient.findFirst({ where: { id: recipient.id, status: "sending" } });
+        if (!stillClaimed) break;
+        if (step.type === "wait") {
+          anchor = new Date(anchor.getTime() + delay);
+          lastSentAt = anchor;
+          currentStep++;
+          continue;
+        }
+        if (step.type === "condition") {
+          if (!evaluateCondition(parseJson<StepSettings>(step.settings, {}).condition, lead)) {
+            await prisma.campaignRecipient.updateMany({ where: { id: recipient.id, status: "sending" }, data: { status: "skipped", currentStep } });
+            summary.skipped++;
+            break;
+          }
+          currentStep++;
+          continue;
+        }
+        const ctx = await buildMessageContext(recipient.leadId);
+        if (!ctx) throw new Error("No se pudo construir el contexto del lead");
+        summary.processed++;
+        let sent = false;
+        let subject = "";
+        let body = "";
+        let channel = step.type;
+        if (step.type === "email") {
+          channel = "email";
+          const message = await generateEmailMessage(ctx, { subjectTemplate: step.subject, bodyTemplate: step.body, stepName: step.name });
+          subject = message.subject;
+          body = message.body;
+          if (campaign.autoSend && identity && smtp && lead.email) {
+            const current = await prisma.campaignRecipient.findFirst({ where: { id: recipient.id, status: "sending" } });
+            const freshLead = await prisma.lead.findUniqueOrThrow({ where: { id: lead.id } });
+            if (!current) break;
+            const freshBlock = await isContactBlocked(workspaceId, freshLead);
+            if (freshBlock) {
+              await prisma.campaignRecipient.updateMany({ where: { id: recipient.id, status: "sending" }, data: { status: "skipped", error: freshBlock } });
+              break;
+            }
+            const start = new Date(); start.setHours(0, 0, 0, 0);
+            const [campaignSent, workspaceSent, campaignReserved, workspaceReserved, manualReserved] = await Promise.all([
+              prisma.conversation.count({ where: { campaignId, channel: "email", direction: "outbound", sentAt: { gte: start } } }),
+              prisma.conversation.count({ where: { workspaceId, channel: "email", direction: "outbound", sentAt: { gte: start } } }),
+              prisma.campaignRecipient.count({ where: { campaignId, status: "sending", id: { not: recipient.id } } }),
+              prisma.campaignRecipient.count({ where: { campaign: { workspaceId }, status: "sending", id: { not: recipient.id } } }),
+              prisma.conversation.count({ where: { workspaceId, channel: "email", status: "sending" } }),
+            ]);
+            if (campaignSent + campaignReserved >= campaign.dailyLimit || workspaceSent + workspaceReserved + manualReserved >= identity.dailyLimit) {
+              await prisma.campaignRecipient.updateMany({ where: { id: recipient.id, status: "sending" }, data: { status: "pending", currentStep, lastSentAt } });
+              break;
+            }
+            const result = await sendEmail({ from: { name: identity.name, email: identity.email }, to: { name: lead.fullName, email: lead.email }, subject, body, replyTo: identity.email, smtp });
+            if (!result.sent) throw new Error(result.error ?? "No se pudo enviar el email");
+            sent = true;
+          }
+        } else if (step.type === "linkedin_connect" || step.type === "linkedin_message") {
+          channel = "linkedin"; subject = step.type === "linkedin_connect" ? "Nota de conexión en LinkedIn" : "Mensaje en LinkedIn";
+          body = await generateLinkedInMessage(ctx);
+        } else if (step.type === "call") {
+          channel = "call"; subject = `Llamar a ${lead.fullName ?? ""}`.trim();
+          body = `Llamar al ${lead.phoneNumber ?? "sin teléfono"}. Presentar ${ctx.playbook.ourCompany}.`;
+        } else {
+          throw new Error(`Tipo de paso no admitido: ${step.type}`);
+        }
+        await prisma.conversation.create({ data: { workspaceId, leadId: lead.id, campaignId, channel, direction: "outbound", subject, body, status: sent ? "closed" : "open", sentAt: sent ? new Date() : null } });
+        summary.messages.push({ leadName: lead.fullName ?? lead.email ?? lead.id, subject, body, channel });
+        if (sent) {
+          summary.sent++; sentCount++;
+          lastSentAt = new Date(); anchor = lastSentAt;
+          await prisma.lead.updateMany({ where: { id: lead.id, status: { notIn: ["unsubscribed", "do_not_contact", "bounced", "replied"] } }, data: { status: "contacted", lastContactedAt: lastSentAt } });
+        } else {
+          // Una tarea manual debe completarse antes de continuar la secuencia.
+          summary.queued++;
+          await prisma.campaignRecipient.updateMany({ where: { id: recipient.id, status: "sending" }, data: { status: "manual", error: "Pendiente de envío manual" } });
+          break;
+        }
+        currentStep++;
+        await prisma.campaignRecipient.updateMany({ where: { id: recipient.id, status: "sending" }, data: { currentStep, sentCount, lastSentAt, error: null } });
       }
-
-      currentStep += 1;
-      sentCount += 1;
-      lastSentAt = new Date();
-      status = "sent";
-      await prisma.campaignRecipient.update({
-        where: { id: recipient.id },
-        data: {
-          status: "sent",
-          currentStep,
-          sentCount,
-          lastSentAt,
-          error: null,
-        },
-      });
     } catch (err) {
-      summary.failed += 1;
       const message = err instanceof Error ? err.message : String(err);
-      summary.errors.push(`${recipient.lead.fullName ?? recipient.leadId}: ${message}`);
-      await prisma.campaignRecipient.update({
-        where: { id: recipient.id },
-        data: { status: "failed", error: message },
-      });
-      break;
-    }
+      summary.failed++; summary.errors.push(`${recipient.lead.fullName ?? recipient.leadId}: ${message}`);
+      await prisma.campaignRecipient.updateMany({ where: { id: recipient.id, status: "sending" }, data: { status: "failed", error: message, currentStep, sentCount, lastSentAt } });
     }
   }
-
-  await logActivity(workspaceId, "campaign.run", campaign.name, {
-    processed: summary.processed,
-    sent: summary.sent,
-    queued: summary.queued,
-  });
-
+  await logActivity(workspaceId, "campaign.run", campaign.name, { processed: summary.processed, sent: summary.sent, queued: summary.queued });
   return summary;
 }
 
@@ -440,11 +338,14 @@ export async function registerReply(opts: {
     data: { status: "replied" },
   });
 
-  if (opts.campaignId) {
-    await prisma.campaignRecipient.updateMany({
-      where: { campaignId: opts.campaignId, leadId: opts.leadId },
-      data: { status: "replied", repliedAt: new Date() },
-    });
+  const recipients = await prisma.campaignRecipient.findMany({
+    where: { leadId: opts.leadId, campaign: { workspaceId: opts.workspaceId }, ...(opts.campaignId ? { campaignId: opts.campaignId } : {}) },
+    include: { campaign: { include: { steps: { orderBy: { order: "asc" } } } } },
+  });
+  for (const recipient of recipients) {
+    const index = recipient.status === "manual" || recipient.status === "sending" ? recipient.currentStep : Math.max(0, recipient.currentStep - 1);
+    if (recipient.campaign.steps[index]?.stopOnReply === false) continue;
+    await prisma.campaignRecipient.updateMany({ where: { id: recipient.id, status: { not: "replied" } }, data: { status: "replied", repliedAt: new Date() } });
   }
 
   await logActivity(opts.workspaceId, "inbox.reply", opts.subject ?? "Respuesta recibida", {
