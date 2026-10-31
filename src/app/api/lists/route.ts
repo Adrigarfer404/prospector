@@ -20,13 +20,13 @@ export async function GET() {
       include: {
         _count: { select: { items: true } },
         items: {
-          select: { score: true },
+          select: { lead: { select: { score: true } } },
         },
       },
     });
     return ok({
       lists: lists.map((list) => {
-        const scores = list.items.map((i) => i.score);
+        const scores = list.items.map((item) => item.lead.score);
         return {
           id: list.id,
           name: list.name,
