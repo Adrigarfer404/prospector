@@ -334,30 +334,34 @@ y cada criterio suma o resta lo que peses en **Playbook → Criterios de ICP**.
 | Criterio | Al cumplirse | Al no cumplirse |
 |---|---|---|
 | Perfil clínico/salud (cargo, empresa o sector) | +12 | −4 |
-| Decide él mismo (dueño, director, autónomo) | +9 | −4 |
-| Consulta privada de un solo profesional | +10 | −3 |
-| Trabaja a domicilio | +7 | −3 |
-| Atiende sin recepción ni apoyo | +6 | −3 |
-| Practica solo o con 1-2 profesionales | +7 | −4 |
-| **Gestiona las citas a mano (sin software)** | **+10** | −3 |
-| Usa una agenda externa (Calendy, Doctoralia...) | +6 | −3 |
-| Tiene web | +3 | −2 |
-| Sin web | +4 | −2 |
-| Email de contacto disponible | +9 | −3 |
-| Teléfono disponible | +5 | −2 |
-| Negocio pequeño (≤10 empleados) | +5 | −2 |
-| Zona objetivo Madrid | +5 | −2 |
-| **Es una cadena o policlínica** | **−26** | 0 |
-| **Ya usa un CRM o software de pacientes** | **−18** | 0 |
-| **Tiene equipo de 4+ profesionales** | **−14** | 0 |
+| Decide él mismo (dueño, director, autónomo) | +8 | −3 |
+| Consulta privada de un solo profesional | +12 | 0* |
+| Trabaja a domicilio | +3 | 0* |
+| Atiende sin recepción ni apoyo | +2 | 0* |
+| Practica solo o con 1-2 profesionales | +6 | −2 |
+| **Gestiona las citas a mano (sin software)** | **+14** | 0* |
+| Usa una agenda externa (Calendy, Doctoralia...) | +2 | 0* |
+| Email de contacto disponible | +4 | −2 |
+| Teléfono disponible | +2 | −1 |
+| Tiene 20+ reseñas en Google Maps | +3 | 0 |
+| Valoración de 4+ estrellas en Maps | +1 | 0 |
+| **Es una cadena o policlínica** | **−30** | 0 |
+| **Ya usa un CRM o software de pacientes** | **−22** | 0 |
+| **Tiene equipo de 4+ profesionales** | **−12** | 0 |
 | **Es una plataforma de citas (Doctoralia, Fresha)** | **−40** | 0 |
 
-Los tres últimos son **criterios de exclusión**: no penalizan cuando no se
-cumplen, pero hunden el score cuando sí.
+Las exclusiones sólo restan cuando se detectan. Las señales inferidas de una
+web (por ejemplo, consulta privada, agenda manual o visitas a domicilio)
+tampoco restan cuando no aparecen: la falta de una mención no demuestra que la
+característica no exista. La puntuación base es 22. La web y la zona no puntúan:
+AgendaOS se vende en toda España y tener una web no demuestra que necesite una
+nueva agenda.
+El `0*` marca señales que sólo puntúan si se detectan; si no hay evidencia,
+quedan sin evaluar.
 
-> El señal más rentable para AgendaOS es **"gestiona las citas a mano"**:
-> no tiene nada que sustituir ni que integrar. El segundo es **"usa una agenda
-> externa"**: ya entiende el problema y ya está pagando por algo pior.
+> La señal de mayor encaje para AgendaOS es **"gestiona las citas a mano"**.
+> La agenda externa suma poco: puede indicar que ya conoce la reserva online,
+> pero también que ya tiene parte de la necesidad cubierta.
 
 ### Los seis perfiles que se detectan
 

@@ -242,15 +242,18 @@ export default function PlaybookPage() {
         </Field>
 
         <div className="mt-5">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-sm font-medium text-slate-700">Criterios de puntuación</p>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Criterios de puntuación</p>
+              <p className="mt-1 text-xs text-slate-500">Define las señales que suman o restan puntos al lead.</p>
+            </div>
             <Button onClick={() => setCriteria((current) => [...current, emptyCriterion()])}>
               <Icon name="plus" className="h-4 w-4" />
               Añadir criterio
             </Button>
           </div>
 
-          <p className="mb-3 text-xs text-slate-500">
+          <p className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
             Cada criterio suma su <strong className="font-semibold">peso</strong> si el lead lo cumple
             y resta su <strong className="font-semibold">penalización</strong> si no. Un peso
             negativo es una exclusión (sólo resta cuando se cumple). Si no hay datos para decidir,
@@ -270,10 +273,25 @@ export default function PlaybookPage() {
                   OPS_BY_KIND[kind].includes(option.value),
                 );
                 return (
-                  <div
+                  <article
                     key={criterion.key}
-                    className="grid gap-3 rounded-lg border border-slate-200 p-3 sm:grid-cols-2 lg:grid-cols-7"
+                    className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
                   >
+                    <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700">{index + 1}</span>
+                        <span className="text-sm font-semibold text-slate-800">{criterion.label || field?.label || "Nuevo criterio"}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        className="text-red-600"
+                        onClick={() => setCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                      >
+                        <Icon name="trash" className="h-4 w-4" />
+                        Quitar
+                      </Button>
+                    </div>
+                    <div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                     <Field label="Campo" hint={field?.hint}>
                       <Select
                         value={criterion.field}
@@ -363,6 +381,8 @@ export default function PlaybookPage() {
                         />
                       )}
                     </Field>
+                    </div>
+                    <div className="mt-4 grid gap-4 rounded-lg bg-slate-50 p-3 sm:grid-cols-2 xl:grid-cols-3">
                     <Field label="Peso" hint="Puntos si se cumple.">
                       <Input
                         value={criterion.weight}
@@ -406,19 +426,8 @@ export default function PlaybookPage() {
                         placeholder="Fisio con web"
                       />
                     </Field>
-                    <div className="flex items-end">
-                      <Button
-                        variant="ghost"
-                        className="text-red-600"
-                        onClick={() =>
-                          setCriteria((current) => current.filter((_, itemIndex) => itemIndex !== index))
-                        }
-                      >
-                        <Icon name="trash" className="h-4 w-4" />
-                        Quitar
-                      </Button>
                     </div>
-                  </div>
+                  </article>
                 );
               })}
             </div>

@@ -15,8 +15,8 @@ export type ScoreContext = {
   city: string | null;
   region: string | null;
   employees: number | null;
-  /** Nº de profesionales detectados en la web (0 si no se pudo saber). */
-  teamSize: number;
+  /** Nº de profesionales detectados en la web (null si no hay evidencia). */
+  teamSize: number | null;
   /** La web delata una cadena, policlínica o multiproyecto. */
   chainLike: boolean;
   /** Consulta privada de un solo profesional. */
@@ -185,6 +185,22 @@ function hasData(field: string, ctx: ScoreContext): boolean {
       return norm(ctx.region).length > 0;
     case "employees":
       return ctx.employees !== null && ctx.employees !== undefined;
+    case "teamSize":
+      return ctx.teamSize !== null;
+    // Estas señales sólo prueban el encaje cuando se detectan. Su ausencia
+    // en una web no demuestra que el negocio no tenga esa característica.
+    case "soloPractice":
+      return ctx.soloPractice;
+    case "homeVisits":
+      return ctx.homeVisits;
+    case "soloWithoutReception":
+      return ctx.soloWithoutReception;
+    case "manualAgenda":
+      return ctx.manualAgenda;
+    case "usesExternalBooking":
+      return ctx.usesExternalBooking;
+    case "sectorMatch":
+      return ctx.sectorMatch || [ctx.title, ctx.company, ctx.industry].some((value) => norm(value).length > 0);
     case "signals":
       return ctx.signals.length > 0;
     case "mapsReviews":
@@ -404,8 +420,8 @@ export function scoreLead(
 
 /**
  * Criterios por defecto para AgendaOS: profesionales sanitarios independientes
- * en España. El señal más fuerte es "tiene web pero NO tiene agenda online
- * propia" — ese es exactamente el hueco que AgendaOS cubre.
+ * en España. La señal más fuerte es la gestión manual de citas. La ausencia de
+ * una señal en la web se trata como desconocida, no como prueba de que no exista.
  */
 export function defaultAgendaosCriteria(): IcpCriterion[] {
   return [
@@ -422,40 +438,40 @@ export function defaultAgendaosCriteria(): IcpCriterion[] {
       field: "title",
       op: "contains",
       value: OWNER_WORDS.join("|"),
-      weight: 9,
-      penalty: 4,
+      weight: 8,
+      penalty: 3,
       label: "Decide él mismo (dueño, director, autónomo)",
     },
     {
       field: "soloPractice",
       op: "equals",
       value: true,
-      weight: 10,
-      penalty: 3,
-      label: "Consulta privada de un solo profesional",
+      weight: 12,
+      penalty: 0,
+      label: "Profesional independiente o consulta privada unipersonal",
     },
     {
       field: "homeVisits",
       op: "equals",
       value: true,
-      weight: 7,
-      penalty: 3,
+      weight: 3,
+      penalty: 0,
       label: "Trabaja a domicilio",
     },
     {
       field: "soloWithoutReception",
       op: "equals",
       value: true,
-      weight: 6,
-      penalty: 3,
+      weight: 2,
+      penalty: 0,
       label: "Atiende sin recepción ni apoyo",
     },
     {
       field: "teamSize",
       op: "lte",
       value: 2,
-      weight: 7,
-      penalty: 4,
+      weight: 6,
+      penalty: 2,
       label: "Practica solo o con 1-2 profesionales",
     },
 
@@ -464,67 +480,34 @@ export function defaultAgendaosCriteria(): IcpCriterion[] {
       field: "manualAgenda",
       op: "equals",
       value: true,
-      weight: 10,
-      penalty: 3,
+      weight: 14,
+      penalty: 0,
       label: "Gestiona las citas a mano (sin software)",
     },
     {
       field: "usesExternalBooking",
       op: "equals",
       value: true,
-      weight: 6,
-      penalty: 3,
+      weight: 2,
+      penalty: 0,
       label: "Usa una agenda externa (oportunidad de captura)",
     },
-    {
-      field: "hasWebsite",
-      op: "equals",
-      value: true,
-      weight: 3,
-      penalty: 2,
-      label: "Tiene web",
-    },
-    {
-      field: "noWebsite",
-      op: "equals",
-      value: true,
-      weight: 4,
-      penalty: 2,
-      label: "Sin web (necesita presencia digital)",
-    },
-
     // --- Contactabilidad ---
     {
       field: "hasEmail",
       op: "equals",
       value: true,
-      weight: 9,
-      penalty: 3,
+      weight: 4,
+      penalty: 2,
       label: "Email de contacto disponible",
     },
     {
       field: "hasPhone",
       op: "equals",
       value: true,
-      weight: 5,
-      penalty: 2,
+      weight: 2,
+      penalty: 1,
       label: "Teléfono disponible",
-    },
-    {
-      field: "employees",
-      op: "lte",
-      value: 10,
-      weight: 5,
-      penalty: 2,
-      label: "Negocio pequeño (1-10 empleados)",
-    },
-    {
-      field: "region",
-      op: "equals",
-      value: "Madrid",
-      weight: 5,
-      penalty: 2,
-      label: "Zona objetivo Madrid",
     },
 
     // --- Demanda demostrable (sólo si el negocio viene de Google Maps) ---
@@ -534,7 +517,7 @@ export function defaultAgendaosCriteria(): IcpCriterion[] {
       field: "mapsReviews",
       op: "gte",
       value: 20,
-      weight: 6,
+      weight: 3,
       penalty: 0,
       label: "Tiene demanda real (20+ reseñas en Google)",
     },
@@ -542,7 +525,7 @@ export function defaultAgendaosCriteria(): IcpCriterion[] {
       field: "mapsRating",
       op: "gte",
       value: 4,
-      weight: 3,
+      weight: 1,
       penalty: 0,
       label: "Bien valorado por sus pacientes (4+ estrellas)",
     },
@@ -560,7 +543,7 @@ export function defaultAgendaosCriteria(): IcpCriterion[] {
       field: "chainLike",
       op: "equals",
       value: true,
-      weight: -26,
+      weight: -30,
       penalty: 0,
       label: "Es una cadena o policlínica",
     },
@@ -568,7 +551,7 @@ export function defaultAgendaosCriteria(): IcpCriterion[] {
       field: "hasCrm",
       op: "equals",
       value: true,
-      weight: -18,
+      weight: -22,
       penalty: 0,
       label: "Ya usa un CRM o software de pacientes",
     },
@@ -576,7 +559,7 @@ export function defaultAgendaosCriteria(): IcpCriterion[] {
       field: "teamSize",
       op: "gte",
       value: 4,
-      weight: -14,
+      weight: -12,
       penalty: 0,
       label: "Tiene equipo de 4+ profesionales",
     },
@@ -622,7 +605,9 @@ export function buildScoreContext(input: {
       ? membersWithRole
       : membersOnTeamPage > 0
         ? membersOnTeamPage
-        : Math.min(teamMembers.length, 3);
+        : teamMembers.length > 0
+          ? Math.min(teamMembers.length, 3)
+          : null;
   const chainLike = signals.some((s) => /cadena|policl|multiproyecto|franquicia/i.test(s));
   const soloPractice = signals.some((s) => /consulta privada|solo profesional/i.test(s));
   const homeVisits = signals.some((s) => /domicilio/i.test(s));
@@ -708,12 +693,12 @@ export function detectProfile(ctx: ScoreContext): ProspectProfile {
   // Tener 4 profesionales en un centro NO es una cadena: es un negocio pequeño.
   if (ctx.chainLike) return "cadena";
   if (ctx.hasCrm) return "con_crm";
-  if (ctx.teamSize >= 4) return "negocio_con_equipo";
+  if (ctx.teamSize !== null && ctx.teamSize >= 4) return "negocio_con_equipo";
   if (ctx.soloPractice || ctx.soloWithoutReception) return "autonomo";
   // Una o dos personas sin recepción ni equipo de apoyo: un autónomo.
-  if (ctx.teamSize <= 1) return "autonomo";
+  if (ctx.teamSize !== null && ctx.teamSize <= 1) return "autonomo";
   if (ctx.homeVisits) return "negocio_con_equipo";
   if (ctx.manualAgenda) return "negocio_sin_crm";
-  if (ctx.teamSize > 1) return "negocio_con_equipo";
+  if (ctx.teamSize !== null && ctx.teamSize > 1) return "negocio_con_equipo";
   return "desconocido";
 }
