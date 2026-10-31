@@ -6,6 +6,7 @@
  */
 
 import type { EmailCandidate, EmailProvider } from "../contract";
+import { logRequestEnd, logRequestStart } from "../../request-logs";
 
 const HUNTER_BASE = "https://api.hunter.io/v2";
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -62,12 +63,15 @@ export async function hunterDomainSearch(
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const url = `${HUNTER_BASE}/domain-search?domain=${encodeURIComponent(cleanDomain)}&api_key=${encodeURIComponent(key)}&limit=${limit}`;
+  const startedAt = logRequestStart("GET", url, "Hunter · búsqueda de dominio");
+  let status: number | "ERROR" = "ERROR";
   try {
-    const url = `${HUNTER_BASE}/domain-search?domain=${encodeURIComponent(cleanDomain)}&api_key=${encodeURIComponent(key)}&limit=${limit}`;
     const res = await fetch(url, {
       signal: controller.signal,
       headers: { Accept: "application/json", "User-Agent": "prospector/0.1" },
     });
+    status = res.status;
     if (!res.ok) return empty;
 
     const parsed = (await res.json()) as HunterResponse;
@@ -95,6 +99,7 @@ export async function hunterDomainSearch(
     return empty;
   } finally {
     clearTimeout(timer);
+    logRequestEnd("GET", url, startedAt, status, "Hunter · búsqueda de dominio");
   }
 }
 

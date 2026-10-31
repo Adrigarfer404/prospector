@@ -14,6 +14,7 @@ import { isIP } from "node:net";
 import * as iconv from "iconv-lite";
 import type { WebsiteContactResult, WebsiteCrawler } from "../contract";
 import { stripAccents } from "../../text";
+import { logRequestEnd, logRequestStart } from "../../request-logs";
 
 const BROWSER_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
@@ -313,25 +314,33 @@ export async function fetchPage(url: string): Promise<CrawledPage | null> {
       const addresses = await lookup(target.hostname, { all: true, family: 4 });
       if (!addresses.length || addresses.some(a => !publicIPv4(a.address))) return null;
       const address = addresses[0].address;
-      const result = await new Promise<{ status: number; location?: string; contentType?: string; bytes: Buffer }>((resolve, reject) => {
-        const request = (target.protocol === "https:" ? httpsRequest : httpRequest)(target, {
-          signal: controller.signal,
-          lookup: (_hostname, _options, callback) => callback(null, address, 4),
-          headers: { "User-Agent": BROWSER_USER_AGENT, Accept: "text/html,application/xhtml+xml", "Accept-Language": "es-ES,es;q=0.9,en;q=0.8" },
-        }, response => {
-          const chunks: Buffer[] = [];
-          let size = 0;
-          response.on("data", (chunk: Buffer) => {
-            size += chunk.length;
-            if (size > 2_000_000) { response.destroy(new Error("Página demasiado grande")); return; }
-            chunks.push(chunk);
+      const startedAt = logRequestStart("GET", target.toString(), `crawler · página ${redirects + 1}`);
+      let status: number | "ERROR" = "ERROR";
+      let result: { status: number; location?: string; contentType?: string; bytes: Buffer };
+      try {
+        result = await new Promise((resolve, reject) => {
+          const request = (target.protocol === "https:" ? httpsRequest : httpRequest)(target, {
+            signal: controller.signal,
+            lookup: (_hostname, _options, callback) => callback(null, address, 4),
+            headers: { "User-Agent": BROWSER_USER_AGENT, Accept: "text/html,application/xhtml+xml", "Accept-Language": "es-ES,es;q=0.9,en;q=0.8" },
+          }, response => {
+            const chunks: Buffer[] = [];
+            let size = 0;
+            response.on("data", (chunk: Buffer) => {
+              size += chunk.length;
+              if (size > 2_000_000) { response.destroy(new Error("Página demasiado grande")); return; }
+              chunks.push(chunk);
+            });
+            response.on("error", reject);
+            response.on("end", () => resolve({ status: response.statusCode ?? 0, location: response.headers.location, contentType: response.headers["content-type"], bytes: Buffer.concat(chunks) }));
           });
-          response.on("error", reject);
-          response.on("end", () => resolve({ status: response.statusCode ?? 0, location: response.headers.location, contentType: response.headers["content-type"], bytes: Buffer.concat(chunks) }));
+          request.on("error", reject);
+          request.end();
         });
-        request.on("error", reject);
-        request.end();
-      });
+        status = result.status;
+      } finally {
+        logRequestEnd("GET", target.toString(), startedAt, status, "crawler · web");
+      }
       if (result.status >= 300 && result.status < 400 && result.location) {
         url = new URL(result.location, target).toString();
         continue;

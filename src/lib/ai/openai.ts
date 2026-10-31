@@ -11,6 +11,7 @@
  */
 
 import type { ChatMessage, WebSearchHit } from "./types";
+import { logRequestEnd, logRequestStart } from "../request-logs";
 
 export type OpenAiClientOptions = {
   baseUrl: string;
@@ -86,14 +87,18 @@ export async function callOpenAi(
   const timeout = call.timeoutMs ?? 180_000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
+  const url = `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+  const startedAt = logRequestStart("POST", url, `OpenAI · ${call.model}${call.webSearch ? " · web search" : ""}`);
+  let status: number | "ERROR" = "ERROR";
 
   try {
-    const res = await fetch(`${options.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+    const res = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
       signal: controller.signal,
     });
+    status = res.status;
     if (!res.ok) {
       const text = await res.text().catch(() => "");
       throw new Error(`API de OpenAI ${res.status}: ${text.slice(0, 400)}`);
@@ -101,6 +106,7 @@ export async function callOpenAi(
     return (await res.json()) as OpenAiResponse;
   } finally {
     clearTimeout(timer);
+    logRequestEnd("POST", url, startedAt, status, `OpenAI · ${call.model}`);
   }
 }
 

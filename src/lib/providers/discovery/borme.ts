@@ -11,6 +11,7 @@
  */
 
 import type { DiscoveredBusiness, DiscoveryQuery, DiscoveryResult } from "../contract";
+import { logRequestEnd, logRequestStart } from "../../request-logs";
 
 const BOE_BASE = "https://www.boe.es";
 const SUMARIO_URL = `${BOE_BASE}/datosabiertos/api/borme/sumario`;
@@ -409,17 +410,21 @@ function getCached<T>(cache: Map<string, CacheEntry<T>>, key: string): Promise<T
 async function fetchWithTimeout(url: string, accept: string): Promise<string | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const startedAt = logRequestStart("GET", url, "BOE · BORME");
+  let status: number | "ERROR" = "ERROR";
   try {
     const res = await fetch(url, {
       signal: controller.signal,
       headers: { "User-Agent": USER_AGENT, Accept: accept },
     });
+    status = res.status;
     if (!res.ok) return null;
     return await res.text();
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
+    logRequestEnd("GET", url, startedAt, status, "BOE · BORME");
   }
 }
 

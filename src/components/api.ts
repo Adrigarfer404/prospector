@@ -29,14 +29,19 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
 
   let response: Response;
+  const method = (init?.method ?? "GET").toUpperCase();
+  const startedAt = Date.now();
+  console.info(`[api] → ${method} ${path.split("?")[0]}`);
   try {
     response = await fetch(path, { ...init, headers });
   } catch {
+    console.info(`[api] ← ${method} ${path.split("?")[0]} error ${Date.now() - startedAt}ms`);
     throw new ApiError(
       "No se pudo contactar con el servidor local. Comprueba que la aplicación está en marcha.",
       0,
     );
   }
+  console.info(`[api] ← ${method} ${path.split("?")[0]} ${response.status} ${Date.now() - startedAt}ms`);
 
   const raw = await response.text();
   let payload: unknown = null;
