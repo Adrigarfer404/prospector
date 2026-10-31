@@ -15,12 +15,25 @@ export async function GET(request: Request) {
         workspaceId: workspace.id,
         ...(q ? { OR: [{ name: { contains: q } }, { domain: { contains: q } }] } : {}),
       },
-      orderBy: { score: "desc" },
+      orderBy: { createdAt: "desc" },
       take: 200,
-      include: { _count: { select: { leads: true } } },
+      include: {
+        _count: { select: { leads: true } },
+        leads: { select: { score: true } },
+      },
     });
 
-    return ok({ companies: companies.map(toCompanyDTO) });
+    const scored = companies
+      .map((company) => {
+        const leadScores = company.leads.map((lead) => lead.score);
+        const score = leadScores.length
+          ? Math.round(leadScores.reduce((sum, value) => sum + value, 0) / leadScores.length)
+          : 0;
+        return { ...toCompanyDTO(company), score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    return ok({ companies: scored });
   } catch (err) {
     return serverError(err);
   }

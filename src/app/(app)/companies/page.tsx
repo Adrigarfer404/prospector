@@ -99,7 +99,7 @@ export default function CompaniesPage() {
                   <th className="px-3 py-2 font-medium">Ubicación</th>
                   <th className="px-3 py-2 font-medium">Teléfono</th>
                   <th className="px-3 py-2 font-medium">Leads</th>
-                  <th className="px-3 py-2 font-medium">Score</th>
+                  <th className="px-3 py-2 font-medium">Score medio</th>
                   <th className="px-3 py-2 font-medium">Añadida</th>
                 </tr>
               </thead>

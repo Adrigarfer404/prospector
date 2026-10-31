@@ -19,10 +19,12 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     });
     if (!list) return fail("Lista no encontrada", 404);
 
-    const items = list.items.map((item) => ({
-      ...toLeadDTO(item.lead),
-      listStatus: item.status,
-    }));
+    const items = list.items
+      .map((item) => ({
+        ...toLeadDTO(item.lead),
+        listStatus: item.status,
+      }))
+      .sort((a, b) => b.score - a.score);
 
     return ok({
       list: {
