@@ -14,6 +14,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { logRequestEnd, logRequestStart } from "../request-logs";
 
 export type MiniMaxMessage = {
   role: "system" | "user" | "assistant";
@@ -133,8 +134,11 @@ export async function callMiniMax(opts: MiniMaxCallOptions): Promise<MiniMaxResp
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeout);
+    const url = `${config.baseURL}/messages`;
+    const startedAt = logRequestStart("POST", url, `MiniMax · ${model} · intento ${attempt + 1}/${maxAttempts}${opts.webSearch ? " · web search" : ""}`);
+    let status: number | "ERROR" = "ERROR";
     try {
-      const res = await fetch(`${config.baseURL}/messages`, {
+      const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -145,6 +149,7 @@ export async function callMiniMax(opts: MiniMaxCallOptions): Promise<MiniMaxResp
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+      status = res.status;
 
       if (!res.ok) {
         const text = await res.text().catch(() => "");
@@ -160,6 +165,7 @@ export async function callMiniMax(opts: MiniMaxCallOptions): Promise<MiniMaxResp
       if (err instanceof Error && err.message.includes("MiniMax 4")) throw lastError;
     } finally {
       clearTimeout(timer);
+      logRequestEnd("POST", url, startedAt, status, `MiniMax · ${model}`);
     }
 
     if (attempt < maxAttempts - 1) {

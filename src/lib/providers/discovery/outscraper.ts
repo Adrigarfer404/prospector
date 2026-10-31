@@ -12,6 +12,8 @@
  * Referencia: https://outscraper.com/google-maps-api
  */
 
+import { logRequestEnd, logRequestStart } from "../../request-logs";
+
 const OUTSCRAPER_BASE = "https://api.outscraper.com";
 const DEFAULT_TIMEOUT_MS = 45_000;
 /** Tope de registros por petición de Outscraper. */
@@ -103,9 +105,12 @@ export async function outscraperMapsSearch(
   const limit = Math.min(Math.max(params.limit ?? 20, 1), MAX_LIMIT_PER_REQUEST);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), params.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const url = `${OUTSCRAPER_BASE}/maps`;
+  const startedAt = logRequestStart("POST", url, "Outscraper · Google Maps");
+  let status: number | "ERROR" = "ERROR";
 
   try {
-    const response = await fetch(`${OUTSCRAPER_BASE}/maps`, {
+    const response = await fetch(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -122,6 +127,7 @@ export async function outscraperMapsSearch(
       }),
       signal: controller.signal,
     });
+    status = response.status;
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
@@ -140,5 +146,6 @@ export async function outscraperMapsSearch(
     return data as OutscraperPlace[];
   } finally {
     clearTimeout(timer);
+    logRequestEnd("POST", url, startedAt, status, "Outscraper · Google Maps");
   }
 }
