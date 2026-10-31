@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, apiSend, errorMessage } from "@/components/api";
+import { apiGet } from "@/components/api";
+import { useFinderState } from "@/components/FinderState";
 import { Icon } from "@/components/icons";
 import {
   Badge,
@@ -19,7 +20,6 @@ import {
   StatCard,
 } from "@/components/ui";
 import { displayName } from "@/components/format";
-import type { FinderResult, LeadDTO } from "@/components/types";
 
 const EXAMPLES = [
   "fisioterapeutas en Madrid",
@@ -37,32 +37,13 @@ const PHASES = [
 ];
 
 export default function FinderPage() {
-  const [query, setQuery] = useState("");
-  const [location, setLocation] = useState("");
-  const [listName, setListName] = useState("");
-  const [resolve, setResolve] = useState(true);
+  const { query, setQuery, location, setLocation, listName, setListName, resolve, setResolve,
+    includeMaps, setIncludeMaps, searching, phase, result, leads, error, saving, savedList,
+    saveError, runSearch, saveToList } = useFinderState();
   // Google Maps es opt-in: sin la API key de Outscraper no se puede usar.
-  const [includeMaps, setIncludeMaps] = useState(false);
   const [mapsConfigured, setMapsConfigured] = useState(false);
 
-  const [searching, setSearching] = useState(false);
-  const [phase, setPhase] = useState(0);
-  const [result, setResult] = useState<FinderResult | null>(null);
-  const [leads, setLeads] = useState<LeadDTO[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [savedList, setSavedList] = useState<{ id: string; name: string } | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
   const resultRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!searching) return;
-    const timer = setInterval(() => {
-      setPhase((current) => Math.min(current + 1, PHASES.length - 1));
-    }, 7000);
-    return () => clearInterval(timer);
-  }, [searching]);
 
   // ¿Está Google Maps disponible en este servidor?
   useEffect(() => {
@@ -80,69 +61,6 @@ export default function FinderPage() {
   }, []);
 
   const canSearch = query.trim().length >= 3 && !searching;
-
-  const runSearch = async () => {
-    if (!canSearch) return;
-    setSearching(true);
-    setPhase(0);
-    setError(null);
-    setResult(null);
-    setLeads([]);
-    setSavedList(null);
-    setSaveError(null);
-
-    try {
-      const response = await apiSend<FinderResult>("/api/finder", "POST", {
-        query: query.trim(),
-        ...(location.trim() ? { location: location.trim() } : {}),
-        resolve,
-        includeMaps,
-      });
-      setResult(response);
-
-      const all = await apiGet<{ leads: LeadDTO[] }>("/api/leads?take=200&sort=score");
-      const ids = new Set(response.leadIds ?? []);
-      setLeads(all.leads.filter((lead) => ids.has(lead.id)));
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setSearching(false);
-    }
-  };
-
-  const saveToList = async () => {
-    const name = listName.trim();
-    if (!name) {
-      setSaveError("Escribe un nombre para la lista antes de guardar.");
-      return;
-    }
-    setSaving(true);
-    setSaveError(null);
-    try {
-      const created = await apiSend<{ list: { id: string; name: string } }>("/api/lists", "POST", {
-        name,
-        description: `Generado con el AI Finder: ${query.trim()}`,
-        icp: query.trim(),
-      });
-      const listId = created.list.id;
-
-      // Alta masiva: un único POST en vez de un PATCH por lead.
-      await apiSend("/api/leads/assign-list", "POST", {
-        leadIds: leads.map((lead) => lead.id),
-        listId,
-        add: true,
-      });
-
-      setSavedList(created.list);
-      setLeads((current) =>
-        current.map((lead) => ({ ...lead, listIds: Array.from(new Set([...lead.listIds, listId])) })),
-      );
-    } catch (err) {
-      setSaveError(errorMessage(err));
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const counters = useMemo(() => {
     if (!result) return null;
